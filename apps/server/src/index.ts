@@ -10,7 +10,7 @@ import {
     subscribeLiveEvents,
     type LiveStreamEvent
 } from './liveSession.js';
-import { applyAction, applyPlan, createInitialSnapshot, createMockPlan } from './scenario.js';
+import { applyAction, applyPlan, createInitialSnapshot, createMockPlan, createSmartPlan } from './scenario.js';
 import type { ResponseMode, Snapshot } from './types.js';
 
 const port = Number(process.env.PORT ?? 8787);
@@ -19,6 +19,7 @@ const liveSessionReady = isLiveConfigured();
 
 let state = createInitialSnapshot(liveReady);
 const liveEventClients = new Set<http.ServerResponse>();
+const turnFunctionCalls = new Set<string>();
 
 function broadcastLiveEvent(event: LiveStreamEvent | { type: 'snapshot'; snapshot: Snapshot }) {
     const payload = `data: ${JSON.stringify(event)}\n\n`;
@@ -31,17 +32,61 @@ function broadcastLiveEvent(event: LiveStreamEvent | { type: 'snapshot'; snapsho
 subscribeLiveEvents((event) => {
     broadcastLiveEvent(event);
 
+    // Track tools already called via function_call during this turn
     if (event.type === 'function_call') {
-        const action = { tool: event.name, args: event.args };
+        turnFunctionCalls.add(event.name);
+        const action = { tool: event.name, args: event.args as Record<string, string> };
         applyAction(state, action);
         broadcastLiveEvent({ type: 'snapshot', snapshot: state });
     }
 
-    // When a live voice turn completes, use the transcript to determine and execute actions
-    if (event.type === 'turn_complete' && event.inputText) {
-        const plan = createMockPlan(event.inputText, state);
-        state = applyPlan(state, event.inputText, plan, 'live');
-        broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+    // When a live voice turn completes, determine actions via multiple fallback paths
+    if (event.type === 'turn_complete') {
+        const inp = event.inputText || '';
+        const out = event.outputText || '';
+        if (inp || out) {
+            // 1. Try output-transcript matching first (most accurate)
+            let plan = createSmartPlan(inp, out, state);
+            plan.actions = plan.actions.filter(a => !turnFunctionCalls.has(a.tool));
+
+            // 2. If no function_calls happened AND smart plan found nothing, 
+            //    fall back to INPUT keyword matching (the audio model doesn't reliably call tools)
+            if (turnFunctionCalls.size === 0 && plan.actions.length === 0 && inp) {
+                const INFO_TOOLS = new Set(['check_driver_status', 'check_inventory_status', 'record_attendance_note']);
+                const fallback = createMockPlan(inp, state);
+                
+                // Check if input has confirmation language or specific detail
+                const low = inp.toLowerCase();
+                const hasConfirmation = /\b(yes|yep|yeah|go ahead|send it|do it|confirm|go for it|that's right|sounds good|perfect|ok send|ok do|please do|let's do|approved)\b/i.test(low);
+                const hasDetail = /\d+%|\d+ percent/i.test(low) || low.split(/\s+/).length > 8;
+                
+                // De-duplicate against existing snapshot actions
+                const existing = new Set(state.actions.map(a => a.domain));
+                
+                fallback.actions = fallback.actions.filter(a => {
+                    const domainMap: Record<string, string> = {
+                        check_driver_status: 'logistics', check_inventory_status: 'inventory',
+                        halt_kitchen_item: 'kitchen', draft_promo: 'marketing',
+                        send_marketing_push: 'marketing', send_customer_apology: 'customer',
+                        add_loyalty_points: 'customer', record_attendance_note: 'staff',
+                        reorder_supplier_item: 'inventory', optimise_driver_routes: 'logistics'
+                    };
+                    // Skip if domain already in timeline
+                    if (existing.has(domainMap[a.tool] || '')) return false;
+                    // Info tools: fire immediately
+                    if (INFO_TOOLS.has(a.tool)) return true;
+                    // Action tools: only fire with confirmation or enough detail
+                    return hasConfirmation || hasDetail;
+                });
+                if (fallback.actions.length > 0) {
+                    plan = fallback;
+                }
+            }
+
+            state = applyPlan(state, inp, plan, 'live');
+            broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+        }
+        turnFunctionCalls.clear();
     }
 });
 

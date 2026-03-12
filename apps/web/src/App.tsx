@@ -121,7 +121,7 @@ export function App() {
     const [speaking, setSpeaking] = useState(false);
     const [flashPanels, setFlashPanels] = useState<Set<string>>(new Set());
     const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('tilly-theme') as 'dark' | 'light') ?? 'dark');
-    const [activeViz, setActiveViz] = useState<{id: string; tool: string; ts: number}[]>([]);
+    const [activeViz, setActiveViz] = useState<{id: string; tool: string; ts: number; args: Record<string, string>}[]>([]);
     const seenActionIds = useRef<Set<string>>(new Set());
 
     // Live state
@@ -237,7 +237,7 @@ export function App() {
                         };
                         tool = domainMap[a.domain] ?? '';
                     }
-                    if (tool) setActiveViz(prev => [...prev, { id: a.id, tool, ts: Date.now() }]);
+                    if (tool) setActiveViz(prev => [...prev, { id: a.id, tool, ts: Date.now(), args: (a as any).args ?? {} }]);
                 }
                 setSnap(p.snapshot); setStatus('ok');
             }
@@ -543,12 +543,12 @@ export function App() {
                                                     <span className="vizStatus">Blocked</span>
                                                 </div>
                                                 <div className="kitchenItem">
-                                                    <span style={{ fontSize: '1.4rem' }}>🧄</span>
-                                                    <span className="kitchenItemName">Garlic Bread</span>
+                                                    <span style={{ fontSize: '1.4rem' }}>🚫</span>
+                                                    <span className="kitchenItemName">{v.args.item || 'Menu item'}</span>
                                                     <span className="kitchenStamp">HALTED</span>
                                                 </div>
                                                 <div style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--text-dim)', lineHeight: 1.4 }}>
-                                                    Dough reserved for pizza throughput. Side item prep paused to protect margin during Friday surge.
+                                                    {v.args.detail || `${v.args.item || 'Item'} prep paused to protect throughput.`}
                                                 </div>
                                             </div>
                                         );
@@ -561,12 +561,12 @@ export function App() {
                                                     <span className="vizStatus">Drafting</span>
                                                 </div>
                                                 <div className="promoCard">
-                                                    <div className="promoHeadline">Loaded Fries Recovery</div>
-                                                    <div className="promoOffer">20% OFF</div>
+                                                    <div className="promoHeadline">{v.args.campaign || v.args.item || 'Promotion'}</div>
+                                                    <div className="promoOffer">{v.args.pct ? `${v.args.pct} OFF` : 'OFFER STAGED'}</div>
                                                     <div className="promoMeta">
-                                                        <span className="promoTag">Margin recovery</span>
-                                                        <span className="promoTag">Loaded fries</span>
-                                                        <span className="promoTag">In-app only</span>
+                                                        <span className="promoTag">Campaign draft</span>
+                                                        {v.args.item && <span className="promoTag">{v.args.item}</span>}
+                                                        <span className="promoTag">In-app</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -582,10 +582,10 @@ export function App() {
                                                 <div className="pushPhone">
                                                     <div className="pushNotif">
                                                         <div className="pushApp">TillTech App</div>
-                                                        <div className="pushText">🍟 20% off Loaded Fries tonight! Use code FRIES20 at checkout. Limited time only.</div>
+                                                        <div className="pushText">{v.args.pct ? `${v.args.pct} off ` : ''}{v.args.item || v.args.campaign || 'Special offer'} — {v.args.code ? `Use code ${v.args.code}` : 'Limited time only'}</div>
                                                     </div>
                                                 </div>
-                                                <div className="pushRecipients">1,200</div>
+                                                <div className="pushRecipients">{v.args.recipients || '1,200'}</div>
                                                 <div className="pushRecLabel">Recipients reached</div>
                                             </div>
                                         );
@@ -613,11 +613,11 @@ export function App() {
                                                 </div>
                                                 <div className="loyaltyWallet">
                                                     <div>
-                                                        <div className="loyaltyPoints">+250</div>
+                                                        <div className="loyaltyPoints">+{v.args.points || '250'}</div>
                                                         <div className="loyaltyLabel">Bonus points added</div>
                                                     </div>
                                                     <div style={{ flex: 1, textAlign: 'right', fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                                                        Customer wallet updated<br />Balance: 1,480 pts
+                                                        Customer wallet updated
                                                     </div>
                                                 </div>
                                             </div>
@@ -633,10 +633,10 @@ export function App() {
                                                 <div className="staffRow">
                                                     <div className="staffAvatar">👤</div>
                                                     <div className="staffInfo">
-                                                        <div className="staffName">Sarah Thompson</div>
-                                                        <div className="staffTime">Arrived 18:15 — scheduled 18:00</div>
+                                                        <div className="staffName">{v.args.name || 'Staff member'}</div>
+                                                        <div className="staffTime">{v.args.time ? `${v.args.time} late` : 'Late arrival recorded'}</div>
                                                     </div>
-                                                    <span className="staffFlag">15 min late</span>
+                                                    <span className="staffFlag">{v.args.time ? `${v.args.time} late` : 'Late'}</span>
                                                 </div>
                                             </div>
                                         );
@@ -649,9 +649,9 @@ export function App() {
                                                     <span className="vizStatus">Drafted</span>
                                                 </div>
                                                 <div className="supplierOrder">
-                                                    <div className="supplierItem">Dark Roast Coffee Beans</div>
+                                                    <div className="supplierItem">{v.args.item || 'Stock item'}</div>
                                                     <div className="supplierMeta">
-                                                        <span>Qty: 12 × 1kg bags</span>
+                                                        <span>Reorder placed</span>
                                                         <span>•</span>
                                                         <span>Primary supplier</span>
                                                     </div>
@@ -677,7 +677,7 @@ export function App() {
                                                         <div className="routeTime after">23 min</div>
                                                     </div>
                                                 </div>
-                                                <div className="routeSaved">⚡ 45 minutes saved across active routes</div>
+                                                <div className="routeSaved">⚡ {v.args.time || '45 minutes'} saved across active routes</div>
                                             </div>
                                         );
                                     default:

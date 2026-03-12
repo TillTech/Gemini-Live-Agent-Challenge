@@ -15,6 +15,7 @@ export type ActionItem = {
     status: 'done' | 'pending';
     domain: string;
     detail: string;
+    args?: Record<string, string>;
 };
 
 export type PanelState = {
@@ -51,7 +52,7 @@ export type Snapshot = {
 
 export type PlannedAction = {
     tool: string;
-    args?: Record<string, unknown>;
+    args?: Record<string, string>;
 };
 
 export type AgentPlan = {
