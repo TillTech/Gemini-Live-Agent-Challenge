@@ -141,7 +141,7 @@ function safeParsePlan(text: string): AgentPlan | null {
 
 function getLiveModelName() {
     return process.env.GEMINI_LIVE_MODEL
-        ?? (process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ? 'gemini-2.0-flash-live-preview-04-09' : 'gemini-live-2.5-flash-preview');
+        ?? 'gemini-2.5-flash-native-audio-preview-12-2025';
 }
 
 function resetAudioTurnState() {

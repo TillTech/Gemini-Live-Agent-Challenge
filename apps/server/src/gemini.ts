@@ -83,7 +83,7 @@ export async function planWithGemini(prompt: string, snapshot: Snapshot): Promis
         return null;
     }
 
-    const model = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+    const model = process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview';
     const client = buildClient();
 
     const transcript = snapshot.transcript.map((entry) => `${entry.role}: ${entry.text}`).join('\n');
