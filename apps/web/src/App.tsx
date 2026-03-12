@@ -386,10 +386,12 @@ export function App() {
     const isLive = listening || ['capturing', 'connected', 'waiting', 'speaking', 'interrupted', 'processing'].includes(liveState);
     // Processing = user has spoken (liveIn is set), Tilly hasn't started her audio response yet
     const isProcessing = isLive && !speaking && liveIn.length > 0 && liveState === 'waiting';
-    const orbState = speaking ? 'speaking' : isProcessing ? 'processing' : isLive ? 'listening' : 'idle';
-    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'processing' ? '◌ Processing' : orbState === 'listening' ? '● Listening' : '○ Click to talk';
+    // Acting = server is executing tools after a completed turn
+    const isActing = liveState === 'processing';
+    const orbState = speaking ? 'speaking' : isActing ? 'acting' : isProcessing ? 'processing' : isLive ? 'listening' : 'idle';
+    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'acting' ? '⚡ Taking action' : orbState === 'processing' ? '◌ Processing' : orbState === 'listening' ? '● Listening' : '○ Click to talk';
     const dotClass = status === 'off' ? 'offline' : isLive ? 'running' : '';
-    const statusText = !isLive ? 'Ready' : speaking ? 'Speaking' : isProcessing ? 'Processing' : 'Listening';
+    const statusText = !isLive ? 'Ready' : speaking ? 'Speaking' : isActing ? 'Acting' : isProcessing ? 'Processing' : 'Listening';
 
     return (
         <main className="shell">
