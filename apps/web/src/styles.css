@@ -229,11 +229,264 @@ body::after {
 .centre {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 20px; position: relative; overflow: hidden; min-width: 0;
+  transition: justify-content 0.6s var(--ease);
 }
+.centre.active {
+  justify-content: flex-start;
+  padding-top: 24px;
+  gap: 16px;
+}
+
+/* Orb scales down when active */
+.centre.active .orbWrap { transform: scale(0.65); }
+.centre.active .orbTag { font-size: 0.72rem; }
+
+/* ── Action Stage ─────────────────────────── */
+.actionStage {
+  width: 100%; max-width: 520px; flex: 1; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 0 16px 16px;
+  animation: fadeUp 0.5s var(--ease);
+}
+.actionStage::-webkit-scrollbar { width: 3px; }
+.actionStage::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 4px; }
+
+/* ── Viz Card (base) ──────────────────────── */
+.vizCard {
+  padding: 16px 18px; border-radius: var(--radius);
+  border: 1px solid var(--glass-border);
+  background: var(--glass); backdrop-filter: blur(14px);
+  animation: vizSlideIn 0.5s var(--ease) both;
+  overflow: hidden; position: relative;
+  transition: all 0.4s var(--ease);
+}
+.vizCard.exiting {
+  opacity: 0; transform: translateY(-10px) scale(0.97);
+  transition: all 0.4s var(--ease);
+}
+.vizCard::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  border-radius: 2px 2px 0 0;
+}
+
+.vizHead {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.vizIcon { font-size: 1.1rem; }
+.vizTitle {
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-dim);
+}
+.vizStatus {
+  margin-left: auto; font-size: 0.6rem; font-weight: 700;
+  text-transform: uppercase; padding: 2px 8px;
+  border-radius: var(--pill); letter-spacing: 0.06em;
+}
+
+/* ── Driver Scan ──────────────────────────── */
+.vizCard.viz-drivers::before { background: linear-gradient(90deg, var(--warn), transparent); }
+.vizCard.viz-drivers .vizStatus { background: var(--warn-soft); color: var(--warn); }
+.driverList { display: flex; flex-direction: column; gap: 6px; }
+.driverRow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  animation: vizSlideIn 0.4s var(--ease) both;
+}
+.driverDot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.driverDot.ok { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.driverDot.delayed { background: var(--warn); box-shadow: 0 0 6px var(--warn); animation: blink 1s ease-in-out infinite; }
+.driverName { font-size: 0.78rem; font-weight: 600; color: var(--text); flex: 1; }
+.driverEta { font-size: 0.68rem; font-weight: 500; color: var(--text-dim); }
+.driverRoute {
+  font-size: 0.62rem; color: var(--accent); font-weight: 600;
+  padding: 2px 6px; background: var(--accent-soft); border-radius: var(--pill);
+}
+
+/* ── Stock Scan ───────────────────────────── */
+.vizCard.viz-inventory::before { background: linear-gradient(90deg, var(--crit), transparent); }
+.vizCard.viz-inventory .vizStatus { background: var(--crit-soft); color: var(--crit); }
+.stockBars { display: flex; flex-direction: column; gap: 6px; }
+.stockRow {
+  display: flex; align-items: center; gap: 10px;
+  animation: vizSlideIn 0.4s var(--ease) both;
+}
+.stockLabel { font-size: 0.72rem; font-weight: 600; color: var(--text); width: 80px; flex-shrink: 0; }
+.stockBarTrack {
+  flex: 1; height: 18px; border-radius: 9px;
+  background: var(--glass); border: 1px solid var(--glass-border); overflow: hidden;
+}
+.stockBarFill {
+  height: 100%; border-radius: 9px;
+  transition: width 1s var(--ease);
+  animation: barGrow 1s var(--ease) both;
+}
+.stockBarFill.healthy { background: linear-gradient(90deg, var(--good), rgba(0,230,118,0.4)); }
+.stockBarFill.low { background: linear-gradient(90deg, var(--warn), rgba(255,171,64,0.4)); }
+.stockBarFill.critical { background: linear-gradient(90deg, var(--crit), rgba(255,82,82,0.4)); animation: barGrow 1s var(--ease) both, blink 1.5s ease-in-out infinite; }
+.stockVal { font-size: 0.68rem; font-weight: 700; color: var(--text-dim); width: 45px; text-align: right; flex-shrink: 0; }
+
+/* ── Kitchen Override ─────────────────────── */
+.vizCard.viz-kitchen::before { background: linear-gradient(90deg, var(--crit), var(--warn)); }
+.vizCard.viz-kitchen .vizStatus { background: var(--crit-soft); color: var(--crit); }
+.kitchenItem {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  position: relative; overflow: hidden;
+}
+.kitchenItemName { font-size: 0.9rem; font-weight: 700; color: var(--text); flex: 1; }
+.kitchenStamp {
+  font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+  padding: 4px 12px; border-radius: var(--pill); letter-spacing: 0.1em;
+  background: var(--crit-soft); color: var(--crit);
+  border: 1.5px solid var(--crit);
+  animation: stampIn 0.5s var(--ease) both;
+  transform-origin: center;
+}
+
+/* ── Campaign Builder ─────────────────────── */
+.vizCard.viz-promo::before { background: linear-gradient(90deg, var(--accent), transparent); }
+.vizCard.viz-promo .vizStatus { background: var(--accent-soft); color: var(--accent); }
+.promoCard {
+  padding: 14px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  animation: vizSlideIn 0.5s var(--ease) both;
+}
+.promoHeadline { font-size: 0.9rem; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.promoOffer {
+  font-size: 1.6rem; font-weight: 800; color: var(--accent);
+  letter-spacing: -0.02em; margin-bottom: 6px;
+  animation: countUp 0.8s var(--ease) both;
+}
+.promoMeta { display: flex; gap: 12px; }
+.promoTag {
+  font-size: 0.62rem; font-weight: 600; padding: 3px 8px;
+  border-radius: var(--pill); background: var(--glass-border);
+  color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+/* ── Push Broadcast ───────────────────────── */
+.vizCard.viz-push::before { background: linear-gradient(90deg, var(--accent), var(--good)); }
+.vizCard.viz-push .vizStatus { background: var(--good-soft); color: var(--good); }
+.pushPhone {
+  max-width: 220px; margin: 0 auto;
+  padding: 12px; border-radius: var(--radius);
+  background: var(--glass-strong); border: 1px solid var(--glass-border);
+}
+.pushNotif {
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  animation: pushSlide 0.6s var(--ease) both;
+}
+.pushApp { font-size: 0.6rem; font-weight: 700; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; letter-spacing: 0.06em; }
+.pushText { font-size: 0.78rem; color: var(--text); line-height: 1.3; }
+.pushRecipients {
+  margin-top: 10px; text-align: center;
+  font-size: 1.1rem; font-weight: 800; color: var(--good);
+  animation: countUp 1.2s var(--ease) both;
+}
+.pushRecLabel { font-size: 0.6rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* ── SMS Dispatch ─────────────────────────── */
+.vizCard.viz-sms::before { background: linear-gradient(90deg, var(--good), transparent); }
+.vizCard.viz-sms .vizStatus { background: var(--good-soft); color: var(--good); }
+.smsBubble {
+  max-width: 280px; padding: 12px 16px;
+  border-radius: 16px 16px 16px 4px;
+  background: var(--accent-soft); border: 1px solid rgba(0,229,255,0.15);
+  animation: vizSlideIn 0.5s var(--ease) both;
+}
+.smsText { font-size: 0.82rem; color: var(--text); line-height: 1.4; }
+.smsTo { font-size: 0.62rem; font-weight: 600; color: var(--text-dim); margin-top: 6px; }
+
+/* ── Loyalty Credit ───────────────────────── */
+.vizCard.viz-loyalty::before { background: linear-gradient(90deg, var(--accent), transparent); }
+.vizCard.viz-loyalty .vizStatus { background: var(--accent-soft); color: var(--accent); }
+.loyaltyWallet {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--glass-border);
+}
+.loyaltyPoints {
+  font-size: 1.8rem; font-weight: 800; color: var(--accent);
+  animation: countUp 1s var(--ease) both;
+}
+.loyaltyLabel { font-size: 0.68rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; }
+
+/* ── Staff Log ────────────────────────────── */
+.vizCard.viz-staff::before { background: linear-gradient(90deg, var(--warn), transparent); }
+.vizCard.viz-staff .vizStatus { background: var(--warn-soft); color: var(--warn); }
+.staffRow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  animation: vizSlideIn 0.4s var(--ease) both;
+}
+.staffAvatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--warn-soft); display: flex; align-items: center; justify-content: center;
+  font-size: 0.8rem; flex-shrink: 0;
+}
+.staffInfo { flex: 1; }
+.staffName { font-size: 0.82rem; font-weight: 700; color: var(--text); }
+.staffTime { font-size: 0.68rem; color: var(--text-dim); }
+.staffFlag {
+  font-size: 0.6rem; font-weight: 700; padding: 2px 8px;
+  border-radius: var(--pill); background: var(--warn-soft); color: var(--warn);
+  text-transform: uppercase;
+}
+
+/* ── Supplier Order ───────────────────────── */
+.vizCard.viz-supplier::before { background: linear-gradient(90deg, var(--accent), transparent); }
+.vizCard.viz-supplier .vizStatus { background: var(--accent-soft); color: var(--accent); }
+.supplierOrder {
+  padding: 12px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  animation: vizSlideIn 0.4s var(--ease) both;
+}
+.supplierItem { font-size: 0.88rem; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.supplierMeta {
+  display: flex; gap: 12px; font-size: 0.68rem; color: var(--text-dim);
+}
+.supplierTag {
+  font-size: 0.6rem; font-weight: 700; padding: 2px 8px;
+  border-radius: var(--pill); background: var(--good-soft); color: var(--good);
+  text-transform: uppercase; margin-top: 6px; display: inline-block;
+}
+
+/* ── Route Optimiser ──────────────────────── */
+.vizCard.viz-routes::before { background: linear-gradient(90deg, var(--good), var(--accent)); }
+.vizCard.viz-routes .vizStatus { background: var(--good-soft); color: var(--good); }
+.routeCompare { display: flex; gap: 10px; }
+.routeBox {
+  flex: 1; padding: 10px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  text-align: center; animation: vizSlideIn 0.4s var(--ease) both;
+}
+.routeLabel { font-size: 0.58rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+.routeTime { font-size: 1.4rem; font-weight: 800; }
+.routeTime.before { color: var(--warn); text-decoration: line-through; opacity: 0.6; }
+.routeTime.after { color: var(--good); }
+.routeSaved {
+  margin-top: 8px; text-align: center;
+  font-size: 0.72rem; font-weight: 700; color: var(--good);
+  animation: countUp 1s var(--ease) both;
+}
+
+/* ── Viz Animations ───────────────────────── */
+@keyframes vizSlideIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes stampIn { 0% { transform: scale(2.5) rotate(-15deg); opacity: 0; } 100% { transform: scale(1) rotate(-3deg); opacity: 1; } }
+@keyframes pushSlide { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes barGrow { from { width: 0 !important; } }
+@keyframes countUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 .orbWrap {
   position: relative; display: flex; align-items: center; justify-content: center;
   cursor: pointer; user-select: none;
+  transition: transform 0.6s var(--ease);
 }
 
 /* Rings */

@@ -121,6 +121,8 @@ export function App() {
     const [speaking, setSpeaking] = useState(false);
     const [flashPanels, setFlashPanels] = useState<Set<string>>(new Set());
     const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('tilly-theme') as 'dark' | 'light') ?? 'dark');
+    const [activeViz, setActiveViz] = useState<{id: string; tool: string; ts: number}[]>([]);
+    const seenActionIds = useRef<Set<string>>(new Set());
 
     // Live state
     const [liveState, setLiveState] = useState<string>('idle');
@@ -185,6 +187,16 @@ export function App() {
         railScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     }, [snap.actions]);
 
+    // Auto-clear old viz cards
+    useEffect(() => {
+        if (activeViz.length === 0) return;
+        const timer = setTimeout(() => {
+            const now = Date.now();
+            setActiveViz(prev => prev.filter(v => now - v.ts < 8000));
+        }, 8000);
+        return () => clearTimeout(timer);
+    }, [activeViz]);
+
     // ── SSE ──
     function openES() {
         if (esRef.current) return;
@@ -205,7 +217,30 @@ export function App() {
                 if (p.outputText) setLiveTx(prev => [...prev, { id: `o${Date.now()}`, role: 'tilly', text: p.outputText }]);
             }
             else if (p.type === 'live_error') { setErr(p.message); setLiveState('disconnected'); }
-            else if (p.type === 'snapshot') { setSnap(p.snapshot); setStatus('ok'); }
+            else if (p.type === 'snapshot') {
+                // Detect new actions for viz
+                const newActions = p.snapshot.actions.filter(a => !seenActionIds.current.has(a.id));
+                for (const a of newActions) {
+                    seenActionIds.current.add(a.id);
+                    // Map action to tool via title then domain
+                    let tool = '';
+                    const t = a.title.toLowerCase();
+                    if (t.includes('push') || t.includes('qr')) tool = 'send_marketing_push';
+                    else if (t.includes('reorder') || t.includes('supplier')) tool = 'reorder_supplier_item';
+                    else if (t.includes('route') || t.includes('optimi')) tool = 'optimise_driver_routes';
+                    else {
+                        const domainMap: Record<string, string> = {
+                            drivers: 'check_driver_status', customer: 'send_customer_apology',
+                            loyalty: 'add_loyalty_points', inventory: 'check_inventory_status',
+                            kitchen: 'halt_kitchen_item', marketing: 'draft_promo',
+                            staff: 'record_attendance_note', logistics: 'optimise_driver_routes',
+                        };
+                        tool = domainMap[a.domain] ?? '';
+                    }
+                    if (tool) setActiveViz(prev => [...prev, { id: a.id, tool, ts: Date.now() }]);
+                }
+                setSnap(p.snapshot); setStatus('ok');
+            }
         };
         es.onerror = () => setLiveState('disconnected');
         esRef.current = es;
@@ -348,6 +383,7 @@ export function App() {
         const snapData = await res.json() as Snapshot;
         setSnap(snapData);
         setStatus('ok'); setErr(''); setLiveState('idle'); setInterim('');
+        setActiveViz([]); seenActionIds.current.clear();
     }
 
     // ── Voice ──
@@ -424,8 +460,8 @@ export function App() {
                     ))}
                 </div>
 
-                {/* Centre — Orb only */}
-                <div className="centre">
+                {/* Centre — Orb + Action Stage */}
+                <div className={`centre ${isLive ? 'active' : ''}`}>
                     <div className="orbWrap" onClick={toggleVoice}>
                         <div className="halo" />
                         <div className="ring ring1" />
@@ -434,6 +470,218 @@ export function App() {
                         <div className={`orb ${orbState}`} />
                     </div>
                     <div className={`orbTag ${orbState !== 'idle' ? 'on' : ''}`}>{orbTag}</div>
+
+                    {/* Action Visualization Stage */}
+                    {isLive && activeViz.length > 0 && (
+                        <div className="actionStage">
+                            {activeViz.map((v, vi) => {
+                                const age = Date.now() - v.ts;
+                                const exiting = age > 7000;
+                                switch (v.tool) {
+                                    case 'check_driver_status':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-drivers ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">🚗</span>
+                                                    <span className="vizTitle">Driver Status Scan</span>
+                                                    <span className="vizStatus">Live</span>
+                                                </div>
+                                                <div className="driverList">
+                                                    {[
+                                                        { name: 'Marcus K.', status: 'ok', eta: 'On time', route: 'Route A' },
+                                                        { name: 'Jade W.', status: 'delayed', eta: '+15 min', route: 'Route B' },
+                                                        { name: 'Tom H.', status: 'ok', eta: 'On time', route: 'Route C' },
+                                                        { name: 'Priya S.', status: 'ok', eta: 'On time', route: 'Route D' },
+                                                    ].map((d, i) => (
+                                                        <div key={d.name} className="driverRow" style={{ animationDelay: `${200 + i * 120}ms` }}>
+                                                            <span className={`driverDot ${d.status}`} />
+                                                            <span className="driverName">{d.name}</span>
+                                                            <span className="driverEta">{d.eta}</span>
+                                                            <span className="driverRoute">{d.route}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    case 'check_inventory_status':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-inventory ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">📦</span>
+                                                    <span className="vizTitle">Stock Level Scan</span>
+                                                    <span className="vizStatus">Alert</span>
+                                                </div>
+                                                <div className="stockBars">
+                                                    {[
+                                                        { label: 'Fresh Dough', pct: 18, level: 'critical', val: '20 ptns' },
+                                                        { label: 'Cheese', pct: 72, level: 'healthy', val: '8.2 kg' },
+                                                        { label: 'Pepperoni', pct: 55, level: 'healthy', val: '4.8 kg' },
+                                                        { label: 'Dark Beans', pct: 30, level: 'low', val: '3 bags' },
+                                                        { label: 'Paper Roll', pct: 45, level: 'low', val: '6 rolls' },
+                                                    ].map((s, i) => (
+                                                        <div key={s.label} className="stockRow" style={{ animationDelay: `${200 + i * 100}ms` }}>
+                                                            <span className="stockLabel">{s.label}</span>
+                                                            <div className="stockBarTrack">
+                                                                <div className={`stockBarFill ${s.level}`} style={{ width: `${s.pct}%`, animationDelay: `${300 + i * 100}ms` }} />
+                                                            </div>
+                                                            <span className="stockVal">{s.val}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    case 'halt_kitchen_item':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-kitchen ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">🍳</span>
+                                                    <span className="vizTitle">Kitchen Override</span>
+                                                    <span className="vizStatus">Blocked</span>
+                                                </div>
+                                                <div className="kitchenItem">
+                                                    <span style={{ fontSize: '1.4rem' }}>🧄</span>
+                                                    <span className="kitchenItemName">Garlic Bread</span>
+                                                    <span className="kitchenStamp">HALTED</span>
+                                                </div>
+                                                <div style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--text-dim)', lineHeight: 1.4 }}>
+                                                    Dough reserved for pizza throughput. Side item prep paused to protect margin during Friday surge.
+                                                </div>
+                                            </div>
+                                        );
+                                    case 'draft_promo':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-promo ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">📣</span>
+                                                    <span className="vizTitle">Campaign Builder</span>
+                                                    <span className="vizStatus">Drafting</span>
+                                                </div>
+                                                <div className="promoCard">
+                                                    <div className="promoHeadline">Loaded Fries Recovery</div>
+                                                    <div className="promoOffer">20% OFF</div>
+                                                    <div className="promoMeta">
+                                                        <span className="promoTag">Margin recovery</span>
+                                                        <span className="promoTag">Loaded fries</span>
+                                                        <span className="promoTag">In-app only</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    case 'send_marketing_push':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-push ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">📱</span>
+                                                    <span className="vizTitle">Push Broadcast</span>
+                                                    <span className="vizStatus">Sent</span>
+                                                </div>
+                                                <div className="pushPhone">
+                                                    <div className="pushNotif">
+                                                        <div className="pushApp">TillTech App</div>
+                                                        <div className="pushText">🍟 20% off Loaded Fries tonight! Use code FRIES20 at checkout. Limited time only.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="pushRecipients">1,200</div>
+                                                <div className="pushRecLabel">Recipients reached</div>
+                                            </div>
+                                        );
+                                    case 'send_customer_apology':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-sms ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">💬</span>
+                                                    <span className="vizTitle">SMS Dispatch</span>
+                                                    <span className="vizStatus">Delivered</span>
+                                                </div>
+                                                <div className="smsBubble">
+                                                    <div className="smsText">Hi, we're sorry your order is running a little late. Your driver is on the way and we've added bonus loyalty points to say thanks for your patience! 🙏</div>
+                                                </div>
+                                                <div className="smsTo">To: Customer #4829 → +44 7*** ***82</div>
+                                            </div>
+                                        );
+                                    case 'add_loyalty_points':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-loyalty ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">⭐</span>
+                                                    <span className="vizTitle">Loyalty Credit</span>
+                                                    <span className="vizStatus">Applied</span>
+                                                </div>
+                                                <div className="loyaltyWallet">
+                                                    <div>
+                                                        <div className="loyaltyPoints">+250</div>
+                                                        <div className="loyaltyLabel">Bonus points added</div>
+                                                    </div>
+                                                    <div style={{ flex: 1, textAlign: 'right', fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                                                        Customer wallet updated<br />Balance: 1,480 pts
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    case 'record_attendance_note':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-staff ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">👥</span>
+                                                    <span className="vizTitle">Staff Log</span>
+                                                    <span className="vizStatus">Recorded</span>
+                                                </div>
+                                                <div className="staffRow">
+                                                    <div className="staffAvatar">👤</div>
+                                                    <div className="staffInfo">
+                                                        <div className="staffName">Sarah Thompson</div>
+                                                        <div className="staffTime">Arrived 18:15 — scheduled 18:00</div>
+                                                    </div>
+                                                    <span className="staffFlag">15 min late</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    case 'reorder_supplier_item':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-supplier ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">📋</span>
+                                                    <span className="vizTitle">Supplier Order</span>
+                                                    <span className="vizStatus">Drafted</span>
+                                                </div>
+                                                <div className="supplierOrder">
+                                                    <div className="supplierItem">Dark Roast Coffee Beans</div>
+                                                    <div className="supplierMeta">
+                                                        <span>Qty: 12 × 1kg bags</span>
+                                                        <span>•</span>
+                                                        <span>Primary supplier</span>
+                                                    </div>
+                                                    <span className="supplierTag">PO Ready</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    case 'optimise_driver_routes':
+                                        return (
+                                            <div key={v.id} className={`vizCard viz-routes ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <div className="vizHead">
+                                                    <span className="vizIcon">🗺️</span>
+                                                    <span className="vizTitle">Route Optimiser</span>
+                                                    <span className="vizStatus">Optimised</span>
+                                                </div>
+                                                <div className="routeCompare">
+                                                    <div className="routeBox" style={{ animationDelay: '200ms' }}>
+                                                        <div className="routeLabel">Before</div>
+                                                        <div className="routeTime before">68 min</div>
+                                                    </div>
+                                                    <div className="routeBox" style={{ animationDelay: '400ms' }}>
+                                                        <div className="routeLabel">After</div>
+                                                        <div className="routeTime after">23 min</div>
+                                                    </div>
+                                                </div>
+                                                <div className="routeSaved">⚡ 45 minutes saved across active routes</div>
+                                            </div>
+                                        );
+                                    default:
+                                        return null;
+                                }
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 {/* Right — Actions */}
