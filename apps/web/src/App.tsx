@@ -447,13 +447,8 @@ export function App() {
                 </aside>
             </section>
 
-            <form className="composer" onSubmit={handleSubmit}>
-                <input className="cInput" type="text" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Type a message to Tilly…" />
-                <button type="submit" className="sendBtn" disabled={status === 'busy' || !prompt.trim()}>
-                    {status === 'busy' ? '⏳' : 'Send'}
-                </button>
-                {err && <span className="errMsg">{err}</span>}
-            </form>
+
+            {err && <span className="errMsg" style={{ padding: '0.5rem 1rem' }}>{err}</span>}
         </main>
     );
 }
