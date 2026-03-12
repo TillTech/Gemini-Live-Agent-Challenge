@@ -31,15 +31,48 @@ export function createInitialSnapshot(liveReady: boolean): Snapshot {
             }
         ],
         panels: [
-            panel('drivers', 'Drivers', '—', 'Awaiting data', 'stable', '—'),
-            panel('inventory', 'Inventory', '—', 'Awaiting data', 'stable', '—'),
-            panel('kitchen', 'Kitchen', '—', 'Awaiting data', 'stable', '—'),
-            panel('marketing', 'Marketing', '—', 'Awaiting data', 'stable', '—'),
-            panel('staff', 'Staffing', '—', 'Awaiting data', 'stable', '—'),
-            panel('logistics', 'Logistics', '—', 'Awaiting data', 'stable', '—')
+            // 🚚 Delivery & Logistics
+            panel('delivery_drivers', 'Delivery Drivers', '—', 'Awaiting data', 'stable', '—'),
+            panel('distribution', 'Distribution', '—', 'Awaiting data', 'stable', '—'),
+            panel('logistics', 'Logistics Overview', '—', 'Awaiting data', 'stable', '—'),
+
+            // 📦 Inventory & Stock
+            panel('store_stock', 'Store Stock', '—', 'Awaiting data', 'stable', '—'),
+            panel('warehouse_stock', 'Warehouse Stock', '—', 'Awaiting data', 'stable', '—'),
+            panel('supplier_orders', 'Supplier Orders', '—', 'Awaiting data', 'stable', '—'),
+            panel('costings', 'Costings', '—', 'Awaiting data', 'stable', '—'),
+            panel('wastage', 'Wastage', '—', 'Awaiting data', 'stable', '—'),
+
+            // 🍳 Kitchen
+            panel('kitchen_flow', 'Kitchen Flow', '—', 'Awaiting data', 'stable', '—'),
+            panel('kitchen_stations', 'Stations', '—', 'Awaiting data', 'stable', '—'),
+
+            // 📣 Marketing & Campaigns
+            panel('promotions', 'Promotions', '—', 'Awaiting data', 'stable', '—'),
+            panel('push_notifications', 'Push Notifications', '—', 'Awaiting data', 'stable', '—'),
+            panel('email_campaigns', 'Email Campaigns', '—', 'Awaiting data', 'stable', '—'),
+            panel('sms_campaigns', 'SMS Campaigns', '—', 'Awaiting data', 'stable', '—'),
+
+            // 💰 Loyalty & Engagement
+            panel('loyalty', 'Loyalty', '—', 'Awaiting data', 'stable', '—'),
+            panel('engagement', 'Games & Incentives', '—', 'Awaiting data', 'stable', '—'),
+
+            // 👥 Customer Service
+            panel('customer_comms', 'Customer Comms', '—', 'Awaiting data', 'stable', '—'),
+
+            // 👷 Staffing & HR
+            panel('rotas', 'Rotas & Schedules', '—', 'Awaiting data', 'stable', '—'),
+            panel('attendance', 'Attendance', '—', 'Awaiting data', 'stable', '—'),
+            panel('staff_stations', 'Staff Stations', '—', 'Awaiting data', 'stable', '—'),
+            panel('performance', 'Performance', '—', 'Awaiting data', 'stable', '—'),
+
+            // 📊 Accounting & Reports
+            panel('payments', 'Payments', '—', 'Awaiting data', 'stable', '—'),
+            panel('reports', 'Reports', '—', 'Awaiting data', 'stable', '—'),
+            panel('accounts', 'Accounts', '—', 'Awaiting data', 'stable', '—'),
         ],
         heroStats: [
-            { id: 'coverage', label: 'Operational Domains', value: '6 available' },
+            { id: 'coverage', label: 'Operational Domains', value: '8 areas • 24 panels' },
             { id: 'risk', label: 'Critical Risks', value: '—' },
             { id: 'engine', label: 'Agent Engine', value: liveReady ? 'Gemini Live' : 'Offline' }
         ],
@@ -122,7 +155,7 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
         case 'check_driver_status': {
             const delayInfo = args.detail || 'One driver is showing a delay on the current route.';
             const delayTime = args.time || '15 min delay';
-            snapshot.panels = updatePanel(snapshot.panels, 'drivers', {
+            snapshot.panels = updatePanel(snapshot.panels, 'delivery_drivers', {
                 value: args.value || '1 delayed',
                 detail: delayInfo,
                 tone: 'warn',
@@ -134,57 +167,69 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
                 tone: 'warn',
                 metric: args.routeInfo || 'Congestion active'
             });
-            pushAction(snapshot, 'Checked driver shift and delay status', 'drivers', delayInfo, args);
+            pushAction(snapshot, 'Checked driver shift and delay status', 'delivery_drivers', delayInfo, args);
             break;
         }
         case 'send_customer_apology': {
             const msg = args.message || 'Customer notified about delayed delivery.';
-            pushAction(snapshot, 'Sent delivery delay apology SMS', 'customer', msg, args);
+            snapshot.panels = updatePanel(snapshot.panels, 'customer_comms', {
+                value: 'SMS sent',
+                detail: msg,
+                tone: 'boost',
+                metric: 'Apology dispatched'
+            });
+            pushAction(snapshot, 'Sent delivery delay apology SMS', 'customer_comms', msg, args);
             break;
         }
         case 'add_loyalty_points': {
             const pts = args.points || '250';
+            snapshot.panels = updatePanel(snapshot.panels, 'loyalty', {
+                value: `${pts} pts added`,
+                detail: `Compensation credit of ${pts} points applied.`,
+                tone: 'boost',
+                metric: `${pts} points`
+            });
             pushAction(snapshot, `Added ${pts} loyalty points`, 'loyalty', `Compensation credit of ${pts} points applied.`, args);
             break;
         }
         case 'check_inventory_status': {
             const critItem = args.item || 'Fresh dough';
-            snapshot.panels = updatePanel(snapshot.panels, 'inventory', {
+            snapshot.panels = updatePanel(snapshot.panels, 'store_stock', {
                 value: args.value || `${critItem} low`,
                 detail: args.detail || `${critItem} has fallen below the safety threshold.`,
                 tone: 'critical',
                 metric: 'Below threshold'
             });
-            snapshot.panels = updatePanel(snapshot.panels, 'kitchen', {
+            snapshot.panels = updatePanel(snapshot.panels, 'kitchen_flow', {
                 value: 'Conservation watch',
                 detail: args.kitchenDetail || 'Prep decisions adjusted based on stock levels.',
                 tone: 'warn',
                 metric: 'Active alert'
             });
-            pushAction(snapshot, 'Checked prep kitchen stock levels', 'inventory', `${critItem} risk surfaced.`, args);
+            pushAction(snapshot, 'Checked prep kitchen stock levels', 'store_stock', `${critItem} risk surfaced.`, args);
             break;
         }
         case 'halt_kitchen_item': {
             const itemName = String(args.item || 'garlic bread');
-            snapshot.panels = updatePanel(snapshot.panels, 'kitchen', {
+            snapshot.panels = updatePanel(snapshot.panels, 'kitchen_flow', {
                 value: `${itemName} paused`,
                 detail: args.detail || `Kitchen flow updated to halt ${itemName} prep.`,
                 tone: 'critical',
                 metric: '1 menu item blocked'
             });
-            pushAction(snapshot, `Halted ${itemName} on kitchen flow`, 'kitchen', `Prep protection applied for ${itemName}.`, args);
+            pushAction(snapshot, `Halted ${itemName} on kitchen flow`, 'kitchen_flow', `Prep protection applied for ${itemName}.`, args);
             break;
         }
         case 'draft_promo': {
             const promoName = String(args.campaign || args.item || 'promotion');
             const discount = args.pct || '';
-            snapshot.panels = updatePanel(snapshot.panels, 'marketing', {
+            snapshot.panels = updatePanel(snapshot.panels, 'promotions', {
                 value: 'Draft staged',
                 detail: `${discount ? discount + ' off ' : ''}${promoName} campaign drafted and ready for approval.`,
                 tone: 'boost',
                 metric: 'Offer queued'
             });
-            pushAction(snapshot, `Drafted ${discount ? discount + ' off ' : ''}${promoName} campaign`, 'marketing', 'Campaign prepared from operational context.', args);
+            pushAction(snapshot, `Drafted ${discount ? discount + ' off ' : ''}${promoName} campaign`, 'promotions', 'Campaign prepared from operational context.', args);
             break;
         }
         case 'send_marketing_push': {
@@ -192,36 +237,36 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
             const discount = args.pct || '';
             const code = args.code || '';
             const recipients = args.recipients || '1,200';
-            snapshot.panels = updatePanel(snapshot.panels, 'marketing', {
+            snapshot.panels = updatePanel(snapshot.panels, 'push_notifications', {
                 value: `${code || 'Push'} sent`,
                 detail: `${discount ? discount + ' off ' : ''}${promoName} push sent to ${recipients} app users.`,
                 tone: 'boost',
                 metric: `${recipients} recipients`
             });
-            pushAction(snapshot, `Sent ${discount ? discount + ' ' : ''}${promoName} push notification`, 'marketing', `Campaign delivered to the branded app audience.`, args);
+            pushAction(snapshot, `Sent ${discount ? discount + ' ' : ''}${promoName} push notification`, 'push_notifications', `Campaign delivered to the branded app audience.`, args);
             break;
         }
         case 'record_attendance_note': {
             const staffName = args.name || args.staff || 'Staff member';
             const lateTime = args.time || args.note || '15 minutes';
-            snapshot.panels = updatePanel(snapshot.panels, 'staff', {
+            snapshot.panels = updatePanel(snapshot.panels, 'attendance', {
                 value: '1 late arrival',
                 detail: `${staffName} logged ${lateTime} late. Attendance note recorded.`,
                 tone: 'warn',
                 metric: `${lateTime} late`
             });
-            pushAction(snapshot, `Recorded attendance exception for ${staffName}`, 'staff', 'Late arrival noted.', args);
+            pushAction(snapshot, `Recorded attendance exception for ${staffName}`, 'attendance', 'Late arrival noted.', args);
             break;
         }
         case 'reorder_supplier_item': {
             const itemName = args.item || 'dark roast beans';
-            snapshot.panels = updatePanel(snapshot.panels, 'inventory', {
+            snapshot.panels = updatePanel(snapshot.panels, 'supplier_orders', {
                 value: `${itemName} reorder`,
                 detail: `Supplier reorder prepared for ${itemName}.`,
                 tone: 'boost',
                 metric: 'PO drafted'
             });
-            pushAction(snapshot, `Reordered ${itemName} from supplier`, 'inventory', 'Purchase order created.', args);
+            pushAction(snapshot, `Reordered ${itemName} from supplier`, 'supplier_orders', 'Purchase order created.', args);
             break;
         }
         case 'optimise_driver_routes': {
@@ -233,6 +278,163 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
                 metric: `${saved} saved`
             });
             pushAction(snapshot, 'Optimised active delivery routes', 'logistics', `Route adjustment applied. ${saved} saved.`, args);
+            break;
+        }
+        // ── New tools for expanded panels ──────────────────
+        case 'check_distribution_status': {
+            const info = args.detail || 'Central kitchen dispatch on schedule. 2 vans en route to stores.';
+            snapshot.panels = updatePanel(snapshot.panels, 'distribution', {
+                value: args.value || '2 active runs',
+                detail: info,
+                tone: 'stable',
+                metric: args.metric || 'On schedule'
+            });
+            pushAction(snapshot, 'Checked distribution fleet status', 'distribution', info, args);
+            break;
+        }
+        case 'check_warehouse_stock': {
+            const info = args.detail || 'Warehouse inventory holding steady. No critical shortages flagged.';
+            snapshot.panels = updatePanel(snapshot.panels, 'warehouse_stock', {
+                value: args.value || 'Stable',
+                detail: info,
+                tone: 'stable',
+                metric: args.metric || 'All above threshold'
+            });
+            pushAction(snapshot, 'Checked warehouse stock levels', 'warehouse_stock', info, args);
+            break;
+        }
+        case 'check_costings': {
+            const itemName = args.item || 'Loaded fries';
+            const cost = args.cost || '£2.40';
+            snapshot.panels = updatePanel(snapshot.panels, 'costings', {
+                value: `${itemName}: ${cost}`,
+                detail: args.detail || `Cost per dish for ${itemName} including ingredients and prep labour.`,
+                tone: 'stable',
+                metric: args.metric || 'Margin healthy'
+            });
+            pushAction(snapshot, `Retrieved costing breakdown for ${itemName}`, 'costings', `Unit cost: ${cost}`, args);
+            break;
+        }
+        case 'check_wastage': {
+            const wasteInfo = args.detail || 'Today\'s wastage within acceptable range. 2 items flagged.';
+            snapshot.panels = updatePanel(snapshot.panels, 'wastage', {
+                value: args.value || '2 flags',
+                detail: wasteInfo,
+                tone: args.value ? 'warn' : 'stable',
+                metric: args.metric || '£12 today'
+            });
+            pushAction(snapshot, 'Checked wastage report', 'wastage', wasteInfo, args);
+            break;
+        }
+        case 'check_kitchen_stations': {
+            const info = args.detail || 'All stations manned. Expediting position covered by shift lead.';
+            snapshot.panels = updatePanel(snapshot.panels, 'kitchen_stations', {
+                value: args.value || 'All covered',
+                detail: info,
+                tone: 'stable',
+                metric: args.metric || '4 active'
+            });
+            pushAction(snapshot, 'Checked kitchen station assignments', 'kitchen_stations', info, args);
+            break;
+        }
+        case 'send_email_campaign': {
+            const subject = args.subject || args.campaign || 'Weekly offers';
+            snapshot.panels = updatePanel(snapshot.panels, 'email_campaigns', {
+                value: 'Campaign sent',
+                detail: `"${subject}" email campaign dispatched to ${args.recipients || 'mailing list'}.`,
+                tone: 'boost',
+                metric: args.recipients ? `${args.recipients} recipients` : 'Sent'
+            });
+            pushAction(snapshot, `Sent "${subject}" email campaign`, 'email_campaigns', 'Email dispatched.', args);
+            break;
+        }
+        case 'send_sms_campaign': {
+            const msg = args.message || args.campaign || 'Weekend deals';
+            snapshot.panels = updatePanel(snapshot.panels, 'sms_campaigns', {
+                value: 'SMS sent',
+                detail: `"${msg}" SMS campaign sent to ${args.recipients || 'customer list'}.`,
+                tone: 'boost',
+                metric: args.recipients ? `${args.recipients} recipients` : 'Sent'
+            });
+            pushAction(snapshot, `Sent "${msg}" SMS campaign`, 'sms_campaigns', 'SMS dispatched.', args);
+            break;
+        }
+        case 'check_engagement': {
+            const info = args.detail || 'Scratch & Win game active. 38 plays today, 4 prizes claimed.';
+            snapshot.panels = updatePanel(snapshot.panels, 'engagement', {
+                value: args.value || '38 plays today',
+                detail: info,
+                tone: 'boost',
+                metric: args.metric || '4 prizes'
+            });
+            pushAction(snapshot, 'Checked engagement games status', 'engagement', info, args);
+            break;
+        }
+        case 'check_rotas': {
+            const info = args.detail || 'Evening shift fully covered. No gaps in the next 48 hours.';
+            snapshot.panels = updatePanel(snapshot.panels, 'rotas', {
+                value: args.value || 'Fully covered',
+                detail: info,
+                tone: 'stable',
+                metric: args.metric || 'No gaps'
+            });
+            pushAction(snapshot, 'Checked rotas and schedules', 'rotas', info, args);
+            break;
+        }
+        case 'check_staff_stations': {
+            const info = args.detail || 'Station assignments confirmed. Grill, fryer, and expedite covered.';
+            snapshot.panels = updatePanel(snapshot.panels, 'staff_stations', {
+                value: args.value || '3 stations active',
+                detail: info,
+                tone: 'stable',
+                metric: args.metric || 'All covered'
+            });
+            pushAction(snapshot, 'Checked staff station assignments', 'staff_stations', info, args);
+            break;
+        }
+        case 'check_performance': {
+            const staffName = args.name || args.staff || 'Team';
+            const info = args.detail || `${staffName} performance metrics updated. On track for the week.`;
+            snapshot.panels = updatePanel(snapshot.panels, 'performance', {
+                value: args.value || `${staffName} on track`,
+                detail: info,
+                tone: 'stable',
+                metric: args.metric || 'Avg 92%'
+            });
+            pushAction(snapshot, `Checked performance for ${staffName}`, 'performance', info, args);
+            break;
+        }
+        case 'check_payments': {
+            const info = args.detail || 'Payment provider online. 147 transactions today, no failures.';
+            snapshot.panels = updatePanel(snapshot.panels, 'payments', {
+                value: args.value || '147 today',
+                detail: info,
+                tone: 'stable',
+                metric: args.metric || '£3,240'
+            });
+            pushAction(snapshot, 'Checked payment status', 'payments', info, args);
+            break;
+        }
+        case 'generate_report': {
+            const reportType = args.type || args.report || 'Sales summary';
+            snapshot.panels = updatePanel(snapshot.panels, 'reports', {
+                value: `${reportType}`,
+                detail: args.detail || `${reportType} report generated for the current period.`,
+                tone: 'boost',
+                metric: 'Generated'
+            });
+            pushAction(snapshot, `Generated ${reportType} report`, 'reports', 'Report ready for review.', args);
+            break;
+        }
+        case 'check_accounts': {
+            const info = args.detail || 'VAT return up to date. No outstanding invoices overdue.';
+            snapshot.panels = updatePanel(snapshot.panels, 'accounts', {
+                value: args.value || 'VAT current',
+                detail: info,
+                tone: 'stable',
+                metric: args.metric || 'All clear'
+            });
+            pushAction(snapshot, 'Checked accounts overview', 'accounts', info, args);
             break;
         }
         default: {
@@ -369,15 +571,102 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
         }});
     }
 
+    // ── Distribution: Tilly confirms she's checked distribution ──
+    if (includesAny(out, ['distribution fleet', 'distribution van', 'warehouse dispatch', 'central kitchen dispatch', 'store transfer status', 'dispatch status'])) {
+        if (!actions.some(a => a.tool === 'check_distribution_status')) {
+            actions.push({ tool: 'check_distribution_status' });
+        }
+    }
+
+    // ── Warehouse stock: Tilly confirms warehouse stock check ──
+    if (includesAny(out, ['warehouse stock', 'warehouse inventory', 'central stock', 'bulk supply'])) {
+        if (!actions.some(a => a.tool === 'check_warehouse_stock')) {
+            actions.push({ tool: 'check_warehouse_stock' });
+        }
+    }
+
+    // ── Costings: Tilly confirms cost check (only when giving actual results, not asking questions) ──
+    const isAskingCost = includesAny(out, ['which item', 'what would you', 'which dish', 'what menu item', 'which product']);
+    if (!isAskingCost && data.item && includesAny(out, ['cost per dish', 'food cost is', 'margin is', 'unit cost is', 'costing for', 'price breakdown', 'gross profit is'])) {
+        actions.push({ tool: 'check_costings', args: { item: data.item } });
+    }
+
+    // ── Wastage: Tilly confirms wastage review ──
+    if (includesAny(out, ['wastage', 'waste report', 'thrown away', 'food waste', 'binned', 'waste level'])) {
+        actions.push({ tool: 'check_wastage' });
+    }
+
+    // ── Kitchen stations: Tilly confirms station assignments ──
+    if (includesAny(out, ['station assignment', 'stations are', 'expedit', 'grill station', 'fryer position', 'line covered'])) {
+        actions.push({ tool: 'check_kitchen_stations' });
+    }
+
+    // ── Email campaign: Tilly confirms email sent ──
+    if (includesAny(out, ['email sent', 'email campaign', 'newsletter', 'email dispatched', 'sent the email'])) {
+        actions.push({ tool: 'send_email_campaign', args: { campaign: data.campaign } });
+    }
+
+    // ── SMS campaign: Tilly confirms SMS sent ──
+    if (includesAny(out, ['sms campaign', 'text message sent', 'sms sent', 'texted', 'text blast'])) {
+        if (!actions.some(a => a.tool === 'send_customer_apology')) {
+            actions.push({ tool: 'send_sms_campaign', args: { campaign: data.campaign } });
+        }
+    }
+
+    // ── Engagement: Tilly confirms engagement check ──
+    if (includesAny(out, ['scratch card', 'game play', 'engagement rate', 'engagement data', 'incentive program', 'prizes claimed'])) {
+        actions.push({ tool: 'check_engagement' });
+    }
+
+    // ── Rotas: Tilly confirms rota check ──
+    if (includesAny(out, ['rota shows', 'rota is', 'roster for', 'shift coverage', 'shifts are covered', 'fully covered', 'no gaps in', 'shift gap'])) {
+        if (!actions.some(a => a.tool === 'check_rotas')) {
+            actions.push({ tool: 'check_rotas' });
+        }
+    }
+
+    // ── Staff stations: Tilly confirms station assignments ──
+    if (includesAny(out, ['staff station', 'assigned to', 'station assignment', 'who is where'])) {
+        actions.push({ tool: 'check_staff_stations' });
+    }
+
+    // ── Performance: Tilly confirms performance review (only when giving results, not asking which staff) ──
+    const isAskingPerf = includesAny(out, ['which member', 'which staff', 'who would you', 'whose performance', 'which team member']);
+    if (!isAskingPerf && data.name && includesAny(out, ["'s performance", 'performance is', 'performance has been', 'kpi', 'consistency score', 'on track', 'metrics show', 'scored'])) {
+        if (!actions.some(a => a.tool === 'check_performance')) {
+            actions.push({ tool: 'check_performance', args: { name: data.name } });
+        }
+    }
+
+    // ── Payments: Tilly confirms payment check ──
+    if (includesAny(out, ['payment status', 'payment provider', 'transactions today', 'card machine status', 'settlement', 'no payment failures'])) {
+        actions.push({ tool: 'check_payments' });
+    }
+
+    // ── Reports: Tilly confirms report generation ──
+    if (includesAny(out, ['report generated', 'report ready', 'pulled the report', 'sales report', 'generated the'])) {
+        actions.push({ tool: 'generate_report', args: { type: data.item || 'Sales summary' } });
+    }
+
+    // ── Accounts: Tilly confirms accounts check ──
+    if (includesAny(out, ['vat return', 'invoices outstanding', 'accounts show', 'financial summary', 'tax return'])) {
+        if (!actions.some(a => a.tool === 'check_accounts')) {
+            actions.push({ tool: 'check_accounts' });
+        }
+    }
+
     const priorContext = current.meta.lastPrompt ? 'Context from the previous operator turn has been preserved.' : 'This is the opening turn of the session.';
 
+    // Cap to prevent runaway tool creation — one answer should not fire 20 panels
+    const cappedActions = actions.slice(0, 3);
+
     return {
-        summary: actions.length > 0
+        summary: cappedActions.length > 0
             ? 'Tilly reviewed the operation and translated findings into visible actions.'
             : 'Tilly is conversing with the operator.',
         spoken: outputText || `${priorContext} Awaiting next instruction.`,
         nextSuggestion: 'Continue the conversation or ask Tilly to act on something specific.',
-        actions
+        actions: cappedActions
     };
 }
 
@@ -389,37 +678,79 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     const actions: PlannedAction[] = [];
 
     if (includesAny(text, ['rundown', 'overview', 'status update', 'brief', 'everything going'])) {
-        actions.push({ tool: 'check_driver_status' }, { tool: 'check_inventory_status' });
+        actions.push({ tool: 'check_driver_status' }, { tool: 'check_inventory_status' }, { tool: 'check_distribution_status' }, { tool: 'check_rotas' }, { tool: 'check_payments' });
     }
-    if (includesAny(text, ['driver', 'clocked', 'shift', 'delivery']) && !actions.some(a => a.tool === 'check_driver_status')) {
+    if (includesAny(text, ['driver', 'clocked', 'delivery']) && !actions.some(a => a.tool === 'check_driver_status')) {
         actions.push({ tool: 'check_driver_status' });
     }
-    if (includesAny(text, ['apolog', 'sms'])) {
+    if (includesAny(text, ['distribution', 'warehouse driver', 'central kitchen dispatch', 'van', 'store transfer'])) {
+        actions.push({ tool: 'check_distribution_status' });
+    }
+    if (includesAny(text, ['apolog', 'sms', 'sorry to the customer'])) {
         actions.push({ tool: 'send_customer_apology' });
     }
     if (includesAny(text, ['loyalty', 'wallet', 'points'])) {
         actions.push({ tool: 'add_loyalty_points', args: { points: data.points || '250' } });
     }
-    if (includesAny(text, ['inventory', 'stock', 'dough', 'beans', 'receipt paper', 'kiosk'])) {
+    if (includesAny(text, ['inventory', 'stock', 'dough', 'beans', 'receipt paper', 'kiosk', 'store stock', 'how much do we have'])) {
         actions.push({ tool: 'check_inventory_status', args: { item: data.item || 'Fresh dough' } });
+    }
+    if (includesAny(text, ['warehouse stock', 'warehouse inventory', 'central stock', 'bulk supply', 'warehouse level'])) {
+        actions.push({ tool: 'check_warehouse_stock' });
+    }
+    if (includesAny(text, ['cost', 'margin', 'price per dish', 'food cost', 'how much does it cost', 'costing', 'unit cost', 'gp', 'gross profit'])) {
+        actions.push({ tool: 'check_costings', args: { item: data.item } });
+    }
+    if (includesAny(text, ['waste', 'wastage', 'thrown away', 'binned', 'food waste', 'loss'])) {
+        actions.push({ tool: 'check_wastage' });
     }
     if (includesAny(text, ['kitchen', 'prep', 'blocked', 'menu item', 'halt', 'garlic bread', 'save the dough', '86'])) {
         actions.push({ tool: 'halt_kitchen_item', args: { item: data.item || 'garlic bread' } });
     }
-    if (includesAny(text, ['promo', 'promotion', 'campaign', 'loaded fries', 'iced latte'])) {
+    if (includesAny(text, ['kitchen station', 'expedit', 'line position', 'who is on grill', 'who is on which station'])) {
+        if (!actions.some(a => a.tool === 'check_kitchen_stations')) actions.push({ tool: 'check_kitchen_stations' });
+    }
+    if (includesAny(text, ['promo', 'promotion', 'campaign', 'loaded fries', 'iced latte', 'discount'])) {
         actions.push({ tool: 'draft_promo', args: { campaign: data.campaign || data.item || 'promotion', pct: data.pct } });
     }
     if (includesAny(text, ['push', 'notification', 'qr code', 'app users', 'send it'])) {
         actions.push({ tool: 'send_marketing_push', args: { campaign: data.campaign || data.item || 'promotion', pct: data.pct } });
     }
+    if (includesAny(text, ['email campaign', 'email blast', 'newsletter', 'send an email', 'email promotion'])) {
+        actions.push({ tool: 'send_email_campaign', args: { campaign: data.campaign || 'Weekly offers' } });
+    }
+    if (includesAny(text, ['sms campaign', 'sms blast', 'text all customers', 'text campaign', 'text message campaign'])) {
+        actions.push({ tool: 'send_sms_campaign', args: { campaign: data.campaign || 'Weekend deals' } });
+    }
+    if (includesAny(text, ['game', 'scratch', 'incentive', 'engagement', 'prize', 'gamif'])) {
+        actions.push({ tool: 'check_engagement' });
+    }
     if (includesAny(text, ['staff', 'attendance', 'late', 'absent', 'who was late', 'show up on time', 'note that down', 'sarah'])) {
         actions.push({ tool: 'record_attendance_note', args: { name: data.name || 'Sarah', time: data.time || '15 minutes' } });
+    }
+    if (includesAny(text, ['rota', 'roster', 'schedule', 'shift cover', 'shift gap', 'coverage', 'next week', 'who is working'])) {
+        if (!actions.some(a => a.tool === 'check_rotas')) actions.push({ tool: 'check_rotas' });
+    }
+    if (includesAny(text, ['staff station', 'who is where', 'station assignment'])) {
+        if (!actions.some(a => a.tool === 'check_staff_stations')) actions.push({ tool: 'check_staff_stations' });
+    }
+    if (includesAny(text, ['performance', 'league table', 'kpi', 'staff performance', 'how are they doing', 'training record'])) {
+        if (!actions.some(a => a.tool === 'check_performance')) actions.push({ tool: 'check_performance', args: { name: data.name } });
     }
     if (includesAny(text, ['reorder', 'supplier', 'beans ordered'])) {
         actions.push({ tool: 'reorder_supplier_item', args: { item: data.item || 'dark roast beans' } });
     }
     if (includesAny(text, ['route', 'reroute', 'optimize', 'optimise', 'traffic'])) {
         actions.push({ tool: 'optimise_driver_routes', args: { time: data.time || '45 minutes' } });
+    }
+    if (includesAny(text, ['payment', 'transaction', 'settlement', 'card machine', 'stripe', 'taking payment'])) {
+        actions.push({ tool: 'check_payments' });
+    }
+    if (includesAny(text, ['report', 'sales report', 'run a report', 'generate report', 'analytics', 'figures', 'numbers'])) {
+        actions.push({ tool: 'generate_report', args: { type: data.item || 'Sales summary' } });
+    }
+    if (includesAny(text, ['account', 'vat', 'invoice', 'tax', 'bill', 'financial'])) {
+        actions.push({ tool: 'check_accounts' });
     }
 
     const priorContext = current.meta.lastPrompt ? 'Context preserved.' : 'Opening turn.';

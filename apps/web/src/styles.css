@@ -178,6 +178,45 @@ body::after {
 .panelCol::-webkit-scrollbar { width: 3px; }
 .panelCol::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 4px; }
 
+/* ── Panel Accordion Groups ──────────────── */
+.panelGroup { border-bottom: 1px solid var(--glass-border); }
+.panelGroup:last-child { border-bottom: none; }
+
+.panelGroupHeader {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 8px 10px; border: none; background: none; cursor: pointer;
+  font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-dim);
+  transition: color 0.2s var(--ease), background 0.2s var(--ease);
+}
+.panelGroupHeader:hover { color: var(--text); background: var(--glass); }
+.panelGroupHeader.active { color: var(--text); }
+
+.pgIcon { font-size: 0.85rem; flex-shrink: 0; }
+.pgLabel { flex: 1; text-align: left; }
+.pgDot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0;
+  animation: softPulse 2s ease-in-out infinite; --pulse-color: var(--accent-soft);
+}
+.pgChevron {
+  font-size: 0.9rem; transition: transform 0.25s var(--ease); flex-shrink: 0;
+  color: var(--text-dim);
+}
+.pgChevron.open { transform: rotate(90deg); }
+
+.panelGroupBody {
+  max-height: 0; overflow: hidden;
+  transition: max-height 0.35s var(--ease), opacity 0.25s var(--ease);
+  opacity: 0; padding: 0 6px;
+}
+.panelGroupBody.open {
+  max-height: 600px; opacity: 1; padding: 0 6px 6px;
+}
+.panelGroupBody .pCard { margin-bottom: 4px; }
+
+.panelGroup.groupFlash .panelGroupHeader { color: var(--accent); }
+
 .pCard {
   padding: 12px 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);

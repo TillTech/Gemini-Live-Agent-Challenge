@@ -52,7 +52,13 @@ subscribeLiveEvents((event) => {
             // 2. If no function_calls happened AND smart plan found nothing, 
             //    fall back to INPUT keyword matching (the audio model doesn't reliably call tools)
             if (turnFunctionCalls.size === 0 && plan.actions.length === 0 && inp) {
-                const INFO_TOOLS = new Set(['check_driver_status', 'check_inventory_status', 'record_attendance_note']);
+                const INFO_TOOLS = new Set([
+                    'check_driver_status', 'check_inventory_status',
+                    'check_distribution_status', 'check_warehouse_stock',
+                    'check_wastage', 'check_kitchen_stations', 'check_engagement',
+                    'check_rotas', 'check_staff_stations',
+                    'check_payments', 'check_accounts'
+                ]);
                 const fallback = createMockPlan(inp, state);
                 
                 // Check if input has confirmation language or specific detail
@@ -65,11 +71,18 @@ subscribeLiveEvents((event) => {
                 
                 fallback.actions = fallback.actions.filter(a => {
                     const domainMap: Record<string, string> = {
-                        check_driver_status: 'logistics', check_inventory_status: 'inventory',
-                        halt_kitchen_item: 'kitchen', draft_promo: 'marketing',
-                        send_marketing_push: 'marketing', send_customer_apology: 'customer',
-                        add_loyalty_points: 'customer', record_attendance_note: 'staff',
-                        reorder_supplier_item: 'inventory', optimise_driver_routes: 'logistics'
+                        check_driver_status: 'delivery_drivers', check_inventory_status: 'store_stock',
+                        halt_kitchen_item: 'kitchen_flow', draft_promo: 'promotions',
+                        send_marketing_push: 'push_notifications', send_customer_apology: 'customer_comms',
+                        add_loyalty_points: 'loyalty', record_attendance_note: 'attendance',
+                        reorder_supplier_item: 'supplier_orders', optimise_driver_routes: 'logistics',
+                        check_distribution_status: 'distribution', check_warehouse_stock: 'warehouse_stock',
+                        check_costings: 'costings', check_wastage: 'wastage',
+                        check_kitchen_stations: 'kitchen_stations', send_email_campaign: 'email_campaigns',
+                        send_sms_campaign: 'sms_campaigns', check_engagement: 'engagement',
+                        check_rotas: 'rotas', check_staff_stations: 'staff_stations',
+                        check_performance: 'performance', check_payments: 'payments',
+                        generate_report: 'reports', check_accounts: 'accounts'
                     };
                     // Skip if domain already in timeline
                     if (existing.has(domainMap[a.tool] || '')) return false;
@@ -231,7 +244,9 @@ const server = http.createServer((request, response) => {
                 return;
             }
 
-            await sendLiveAudioChunk(body.audioBase64, body.mimeType);
+            try {
+                await sendLiveAudioChunk(body.audioBase64, body.mimeType);
+            } catch { /* session already closed — drop silently */ }
             sendJson(response, { ok: true });
             return;
         }

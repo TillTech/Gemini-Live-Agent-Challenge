@@ -368,7 +368,21 @@ export async function startLiveAudioSession() {
                     { name: 'send_marketing_push', description: 'Send a push notification promotion to all branded mobile app users.' },
                     { name: 'record_attendance_note', description: 'Record a staff attendance exception such as lateness.', parameters: { type: 'OBJECT', properties: { staff: { type: 'STRING', description: 'Staff member name' }, note: { type: 'STRING', description: 'Attendance note' } } } },
                     { name: 'reorder_supplier_item', description: 'Place a reorder with the primary supplier for a low-stock item.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Item to reorder' } } } },
-                    { name: 'optimise_driver_routes', description: 'Optimise active delivery routes based on current traffic conditions.' }
+                    { name: 'optimise_driver_routes', description: 'Optimise active delivery routes based on current traffic conditions.' },
+                    { name: 'check_distribution_status', description: 'Check status of distribution fleet — warehouse-to-store transfers, central kitchen dispatches.' },
+                    { name: 'check_warehouse_stock', description: 'Check warehouse and central kitchen bulk stock levels.' },
+                    { name: 'check_costings', description: 'Check cost per dish, food cost breakdowns, margins.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Menu item to check costing for' } } } },
+                    { name: 'check_wastage', description: 'Check food wastage reports and waste tracking data.' },
+                    { name: 'check_kitchen_stations', description: 'Check kitchen station assignments — grill, fryer, expediting, line positions.' },
+                    { name: 'send_email_campaign', description: 'Create and send a branded email campaign to mailing list.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Email subject/campaign name' } } } },
+                    { name: 'send_sms_campaign', description: 'Create and send an SMS text campaign to customers.', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'SMS campaign message' } } } },
+                    { name: 'check_engagement', description: 'Check in-app engagement games status — plays, prizes, participation.' },
+                    { name: 'check_rotas', description: 'Check staff rotas, shift schedules, and coverage gaps.' },
+                    { name: 'check_staff_stations', description: 'Check staff station assignments across kitchen, warehouse, and management areas.' },
+                    { name: 'check_performance', description: 'Check staff performance metrics, leagues, KPIs, and training progress.', parameters: { type: 'OBJECT', properties: { staff: { type: 'STRING', description: 'Staff member name' } } } },
+                    { name: 'check_payments', description: 'Check payment provider status, transaction count, settlement data.' },
+                    { name: 'generate_report', description: 'Generate an operational report — sales, stock, performance, payments.', parameters: { type: 'OBJECT', properties: { type: { type: 'STRING', description: 'Type of report to generate' } } } },
+                    { name: 'check_accounts', description: 'Check accounting overview — VAT returns, invoices, outstanding bills.' }
                 ]
             }]
         },
@@ -408,10 +422,10 @@ export async function sendLiveAudioChunk(audioBase64: string, mimeType: string) 
     const activeSession = await startLiveAudioSession();
 
     if (!activeSession) {
-        throw new Error('Live audio session is not configured.');
+        // Session already torn down — silently drop buffered chunks
+        return;
     }
 
-    console.log('[LIVE] Sending audio chunk, mimeType:', mimeType, 'size:', audioBase64.length);
     activeSession.sendRealtimeInput({
         audio: {
             data: audioBase64,
