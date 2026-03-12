@@ -120,6 +120,7 @@ export function App() {
     const [interim, setInterim] = useState('');
     const [speaking, setSpeaking] = useState(false);
     const [flashPanels, setFlashPanels] = useState<Set<string>>(new Set());
+    const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('tilly-theme') as 'dark' | 'light') ?? 'dark');
 
     // Live state
     const [liveState, setLiveState] = useState<string>('idle');
@@ -146,6 +147,9 @@ export function App() {
     const speakEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const railScrollRef = useRef<HTMLDivElement | null>(null);
     const prevSnapRef = useRef<Snapshot>(fallbackSnap);
+
+    // ── Theme init ──
+    useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
     // ── Init ──
     useEffect(() => {
@@ -397,6 +401,7 @@ export function App() {
                     <span className="statusLabel">{statusText}</span>
                 </div>
                 <div className="topBarRight">
+                    <button className="resetBtn" onClick={() => { const next = theme === 'dark' ? 'light' : 'dark'; setTheme(next); document.documentElement.dataset.theme = next; localStorage.setItem('tilly-theme', next); }} title="Toggle theme">{theme === 'dark' ? '☀️' : '🌙'}</button>
                     <button className="resetBtn" onClick={() => void resetScenario()}>Reset</button>
                 </div>
             </header>

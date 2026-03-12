@@ -1,111 +1,84 @@
 # Tilly Live Ops
 
-Tilly Live Ops is a public-project starter for the Gemini Live Agent Challenge.
+**A real-time voice agent for hospitality operations, powered by Gemini Live API.**
 
-It is designed as a new, competition-compliant thin-slice inspired by TillTech's real-world hospitality operations model. The core idea is simple: an operator talks to their business in real time, Tilly reasons across live operational context, takes safe actions, and shows visible outcomes on screen.
-
-## Why This Exists
-
-The private TillTech platform already proves the domain: operations, inventory, kitchen, logistics, marketing, and real business workflows. This starter turns that knowledge into a fresh public project with a clean IP and privacy boundary.
+Tilly Live Ops is a competition entry for the [Gemini Live Agent Challenge](https://devpost.com/). An operator talks to Tilly through a live voice interface — she can see across drivers, inventory, kitchen, marketing, staffing, and logistics, take corrective actions, and update the command surface in real time.
 
 ## Demo Story
 
-The strongest narrative is a single continuous conversation during a live shift:
+A single continuous conversation during a live shift:
 
-1. The operator asks for a quick operational rundown.
-2. Tilly surfaces issues across drivers, inventory, and kitchen readiness.
-3. The operator triggers corrective actions by voice.
-4. The system updates the UI immediately and confirms the results.
+1. The operator opens the dashboard and clicks the orb to start talking
+2. "Hey Tilly, how are the drivers doing?" → Tilly checks driver status, surfaces the delay on Driver 2, updates the Drivers panel
+3. "What about the kitchen?" → Tilly checks prep status, flags low dough, updates Kitchen and Inventory panels
+4. "Send a push notification for the loaded fries promo" → Tilly confirms details, sends the notification, updates Marketing panel and action timeline
 
-Recommended flows:
+## Tech Stack
 
-- Driver and shift status
-- Kitchen and inventory protection
-- Marketing push to recover margin or move stock
-
-## Current Starter Scope
-
-This scaffold includes:
-
-- a cinematic web command surface
-- a Node backend with mock fallback, Google GenAI SDK planning support, backend-managed Gemini Live text sessions, and backend-managed live audio transport
-- challenge and submission docs
-- starter Cloud Run Terraform
-
-This scaffold does not yet include:
-
-- production auth
-- real business integrations
-- non-synthetic customer or financial data
-
-## Repo Structure
-
-```text
-.
-|-- apps/
-|   |-- server/
-|   `-- web/
-|-- docs/
-|-- infra/
-|-- ARCHITECTURE.md
-|-- README.md
-|-- package.json
-`-- pnpm-workspace.yaml
-```
+| Layer | Technology |
+|-------|-----------|
+| Voice | Gemini Live API (`gemini-2.5-flash-native-audio-preview-12-2025`) |
+| Planning | Gemini 3 Flash (text) + transcript-driven keyword planner |
+| Backend | Node.js + tsx + Hono |
+| Frontend | React + Vite |
+| Infra | Google Cloud Run (Terraform) |
+| Design | CSS custom properties, dark/light theme, glassmorphism |
 
 ## Quick Start
 
-### Requirements
-
-- Node.js 20+
-- pnpm 10+
-
-### Install
-
 ```bash
 pnpm install
-```
-
-### Run
-
-```bash
+cp .env.example .env   # Add your GOOGLE_API_KEY
 pnpm dev
 ```
 
-The web app runs on `http://localhost:5173`.
-The server runs on `http://localhost:8787`.
+- **Web UI:** http://localhost:5173
+- **API Server:** http://localhost:8787
 
-## Public Repo Rules
+## Architecture
 
-- Use Gemini Live API or ADK in the final submission build.
-- Keep all data synthetic unless you have explicit rights and disclosure coverage.
-- Keep deployment proof and IaC in the public repo.
-- Keep the demo runnable by judges without private infrastructure.
+```
+apps/
+  server/src/
+    index.ts          — HTTP server, SSE events, turn_complete → planner
+    liveSession.ts    — Gemini Live API session, audio streaming
+    gemini.ts         — GenAI SDK client
+    scenario.ts       — State, panels, tools, keyword planner
+  web/src/
+    App.tsx           — Single-component UI
+    styles.css        — Design system with dark/light tokens
+docs/                 — Competition submission docs
+infra/                — Cloud Run Terraform
+```
 
-## Gemini Setup
+### How Voice → Actions Works
 
-The current starter can run in two ways:
+1. **User speaks** → browser captures audio → server streams to Gemini Live API
+2. **Tilly responds** via audio — played back in the browser
+3. On **turn complete**, the accumulated transcript is keyword-matched by the planner
+4. Matching tools fire → panels and action timeline update in real-time via SSE
 
-- `mock` mode for deterministic local iteration
-- `gemini`, `live`, or `auto` mode when Google GenAI credentials are configured
+## Features
 
-The current browser UI also includes:
+- 🎙️ **Real-time voice** — talk naturally, interrupt, ask follow-ups
+- 📊 **Live command surface** — 6 operational domain panels update in real-time
+- ⏱️ **Action timeline** — every action Tilly takes is logged with status
+- 🌙 **Dark/light theme** — toggle in the top bar, persists across sessions
+- 🔄 **Session resilience** — reconnection cooldown prevents cascading failures
 
-- realtime live microphone capture that streams WAV chunks to a backend-managed Gemini Live session when `live` mode is selected
-- streamed model-audio playback from the live session in the browser
-- local browser speech recognition and speech synthesis fallbacks for non-live rehearsal paths
+## Environment Variables
 
-This is now a real Gemini Live prototype path rather than a browser-only voice mock. The remaining work is public-repo packaging, deployment proof, and optional replacement of synthetic actions with safe demo integrations.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GOOGLE_API_KEY` | Yes | Gemini API key |
+| `GEMINI_LIVE_MODEL` | Yes | `gemini-2.5-flash-native-audio-preview-12-2025` |
+| `GEMINI_MODEL` | No | Text model for planning (default: `gemini-3-flash-preview`) |
+| `GEMINI_LIVE_VOICE` | No | Voice name (default: `Aoede`) |
 
-If you want to test model-backed planning and live transport, configure either:
+## Deployment
 
-- `GOOGLE_API_KEY` for direct Gemini API usage, or
-- `GOOGLE_GENAI_USE_VERTEXAI=true` with `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_REGION`
+Cloud Run deployment via Terraform in `infra/`. See `docs/` for competition submission guidelines.
 
-## Suggested Build Order
+## License
 
-1. Rehearse the 4-minute demo with one continuous conversation in `live` mode.
-2. Deploy the same thin slice to Google Cloud Run and capture proof.
-3. Finalize Devpost submission copy and architecture diagram.
-4. Decide whether the public repo should stay synthetic or add safe demo integrations.
-5. Complete `docs/copy-ready-checklist.md` before copying this folder into the public repo.
+Built for the Gemini Live Agent Challenge. Inspired by TillTech's real-world hospitality operations platform.
