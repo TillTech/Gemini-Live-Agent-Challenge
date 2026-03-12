@@ -265,13 +265,17 @@ function handleAudioMessage(event: AudioServerMessage) {
 
 export async function startLiveAudioSession() {
     if (audioSession) {
+        console.log('[LIVE] Audio session already active, reusing.');
         emitLiveEvent({ type: 'live_status', status: 'connected' });
         return audioSession;
     }
 
     if (!isLiveConfigured()) {
+        console.log('[LIVE] Not configured — API key missing.');
         return null;
     }
+
+    console.log('[LIVE] Starting audio session with model:', getLiveModelName());
 
     const ai = buildClient();
 
@@ -292,17 +296,21 @@ export async function startLiveAudioSession() {
         },
         callbacks: {
             onopen: () => {
+                console.log('[LIVE] Audio session CONNECTED');
                 emitLiveEvent({ type: 'live_status', status: 'connected' });
             },
             onmessage: (event: AudioServerMessage) => {
+                console.log('[LIVE] Received message:', event.serverContent ? 'serverContent' : 'other', JSON.stringify(event).substring(0, 200));
                 handleAudioMessage(event);
             },
             onclose: () => {
+                console.log('[LIVE] Audio session CLOSED');
                 audioSession = null;
                 resetAudioTurnState();
                 emitLiveEvent({ type: 'live_status', status: 'disconnected' });
             },
             onerror: (error: unknown) => {
+                console.error('[LIVE] Audio session ERROR:', error);
                 audioSession = null;
                 resetAudioTurnState();
                 emitLiveEvent({
@@ -323,6 +331,7 @@ export async function sendLiveAudioChunk(audioBase64: string, mimeType: string) 
         throw new Error('Live audio session is not configured.');
     }
 
+    console.log('[LIVE] Sending audio chunk, mimeType:', mimeType, 'size:', audioBase64.length);
     activeSession.sendRealtimeInput({
         audio: {
             data: audioBase64,

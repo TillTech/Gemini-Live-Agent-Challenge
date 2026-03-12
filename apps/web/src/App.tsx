@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState, useCallback } from 'react';
 
 declare global {
     interface Window {
@@ -8,87 +8,27 @@ declare global {
     }
 }
 
-type SpeechRecognitionAlternativeLike = {
-    transcript: string;
-};
-
-type SpeechRecognitionResultLike = {
-    0: SpeechRecognitionAlternativeLike;
-    isFinal: boolean;
-};
-
-type SpeechRecognitionEventLike = Event & {
-    resultIndex: number;
-    results: ArrayLike<SpeechRecognitionResultLike>;
-};
-
+type SpeechRecognitionAlternativeLike = { transcript: string };
+type SpeechRecognitionResultLike = { 0: SpeechRecognitionAlternativeLike; isFinal: boolean };
+type SpeechRecognitionEventLike = Event & { resultIndex: number; results: ArrayLike<SpeechRecognitionResultLike> };
 type SpeechRecognitionLike = EventTarget & {
-    continuous: boolean;
-    interimResults: boolean;
-    lang: string;
+    continuous: boolean; interimResults: boolean; lang: string;
     onresult: ((event: SpeechRecognitionEventLike) => void) | null;
     onerror: ((event: Event & { error?: string }) => void) | null;
     onend: (() => void) | null;
-    start: () => void;
-    stop: () => void;
+    start: () => void; stop: () => void;
 };
 
-type ActionItem = {
-    id: string;
-    title: string;
-    status: 'done' | 'pending';
-    domain: string;
-    detail: string;
-};
-
-type PanelState = {
-    id: string;
-    label: string;
-    value: string;
-    detail: string;
-    tone: 'stable' | 'warn' | 'critical' | 'boost';
-    metric: string;
-};
-
-type HeroStat = {
-    id: string;
-    label: string;
-    value: string;
-};
-
-type TranscriptEntry = {
-    id: string;
-    role: 'system' | 'operator' | 'tilly';
-    text: string;
-    timestamp: string;
-};
-
-type SnapshotMeta = {
-    engine: 'mock' | 'gemini' | 'live';
-    liveReady: boolean;
-    lastPrompt: string | null;
-    nextSuggestion: string;
-};
-
-type Snapshot = {
-    summary: string;
-    speaking: string;
-    actions: ActionItem[];
-    panels: PanelState[];
-    heroStats: HeroStat[];
-    transcript: TranscriptEntry[];
-    meta: SnapshotMeta;
-};
-
-type ConfigResponse = {
-    liveReady: boolean;
-    liveSessionReady?: boolean;
-    defaultMode: 'auto' | 'mock' | 'gemini' | 'live';
-    suggestions: string[];
-};
+type ActionItem = { id: string; title: string; status: 'done' | 'pending'; domain: string; detail: string };
+type PanelState = { id: string; label: string; value: string; detail: string; tone: 'stable' | 'warn' | 'critical' | 'boost'; metric: string };
+type HeroStat = { id: string; label: string; value: string };
+type TranscriptEntry = { id: string; role: 'system' | 'operator' | 'tilly'; text: string; timestamp: string };
+type SnapshotMeta = { engine: 'mock' | 'gemini' | 'live'; liveReady: boolean; lastPrompt: string | null; nextSuggestion: string };
+type Snapshot = { summary: string; speaking: string; actions: ActionItem[]; panels: PanelState[]; heroStats: HeroStat[]; transcript: TranscriptEntry[]; meta: SnapshotMeta };
+type ConfigResponse = { liveReady: boolean; liveSessionReady?: boolean; defaultMode: 'auto' | 'mock' | 'gemini' | 'live'; suggestions: string[] };
 
 type LiveStreamEvent =
-    | { type: 'live_status'; status: 'connected' | 'capturing' | 'processing' | 'speaking' | 'waiting' | 'disconnected' | 'interrupted' }
+    | { type: 'live_status'; status: string }
     | { type: 'input_transcript'; text: string; final: boolean }
     | { type: 'output_transcript'; text: string; final: boolean }
     | { type: 'output_text'; text: string }
@@ -97,748 +37,455 @@ type LiveStreamEvent =
     | { type: 'live_error'; message: string }
     | { type: 'snapshot'; snapshot: Snapshot };
 
-type LiveTransportState = 'idle' | 'connecting' | 'connected' | 'capturing' | 'processing' | 'speaking' | 'waiting' | 'disconnected' | 'interrupted';
+type AudioChunk = { data: string; mimeType: string };
 
-type AudioChunk = {
-    data: string;
-    mimeType: string;
-};
+const API = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787';
+const FLUSH_SAMPLES = 4096;
 
-const fallbackSnapshot: Snapshot = {
+const DEMO_SCRIPT = [
+    { prompt: "Morning TillTech. Give me a quick operational rundown — who's clocked in, any delivery issues, and how's inventory looking?", delay: 2800 },
+    { prompt: "That dough level is concerning. Halt garlic bread prep to save the dough for pizzas and push a loaded fries promo to make up margin.", delay: 3200 },
+    { prompt: "Good call. Send that promo as a push notification to our app users now.", delay: 2500 },
+    { prompt: "One last thing — Sarah was late again. Note that down and optimise the remaining delivery routes around the traffic.", delay: 3000 }
+];
+
+const ICONS: Record<string, string> = { drivers: '🚗', inventory: '📦', kitchen: '🍳', marketing: '📣', staff: '👥', logistics: '🗺️' };
+
+const fallbackSnap: Snapshot = {
     summary: 'Tilly is standing by for a live operational brief.',
-    speaking: 'Ask for a shift rundown, inventory risk, route optimisation, or a quick recovery campaign.',
-    actions: [
-        {
-            id: 'a1',
-            title: 'Voice agent primed for first operator instruction',
-            status: 'pending',
-            domain: 'control',
-            detail: 'Use mock mode until Gemini credentials are configured.'
-        }
-    ],
+    speaking: 'Click the orb or type a command to start talking to your business.',
+    actions: [{ id: 'a0', title: 'Ready for first instruction', status: 'pending', domain: 'control', detail: 'Send a prompt or click Run Demo to see the full experience.' }],
     panels: [
-        { id: 'drivers', label: 'Drivers', value: '4 active', detail: 'All evening drivers visible.', tone: 'stable', metric: 'ETA board online' },
-        { id: 'inventory', label: 'Inventory', value: 'Stable', detail: 'Fresh dough threshold monitoring active.', tone: 'stable', metric: '2 live thresholds' },
-        { id: 'kitchen', label: 'Kitchen', value: 'Nominal', detail: 'No blocked items yet.', tone: 'stable', metric: '0 blocked items' },
-        { id: 'marketing', label: 'Marketing', value: 'Idle', detail: 'No active campaign drafted.', tone: 'boost', metric: 'Reach ready' }
+        { id: 'drivers', label: 'Drivers', value: '4 active', detail: 'All evening drivers visible.', tone: 'stable', metric: 'ETA online' },
+        { id: 'inventory', label: 'Inventory', value: 'Stable', detail: 'Dough threshold active.', tone: 'stable', metric: '2 thresholds' },
+        { id: 'kitchen', label: 'Kitchen', value: 'Nominal', detail: 'No blocked items.', tone: 'stable', metric: '0 blocked' },
+        { id: 'marketing', label: 'Marketing', value: 'Idle', detail: 'No active campaigns.', tone: 'boost', metric: 'Reach ready' },
+        { id: 'staff', label: 'Staffing', value: 'On track', detail: 'Attendance clear.', tone: 'stable', metric: '1 flag' },
+        { id: 'logistics', label: 'Logistics', value: 'Normal', detail: 'Default route planning.', tone: 'stable', metric: '45 min avg' }
     ],
     heroStats: [
-        { id: 'coverage', label: 'Operational Domains', value: '6 live' },
-        { id: 'risk', label: 'Critical Risks', value: '1 watch' },
-        { id: 'engine', label: 'Agent Engine', value: 'Mock fallback' }
+        { id: 'cov', label: 'Domains', value: '6 live' },
+        { id: 'risk', label: 'Risks', value: '1 watch' },
+        { id: 'eng', label: 'Engine', value: 'Ready' }
     ],
     transcript: [
-        { id: 't1', role: 'system', text: 'Session created. Synthetic hospitality state loaded.', timestamp: new Date().toISOString() },
-        { id: 't2', role: 'tilly', text: 'Good morning. I am ready to walk the shift and take action across operations.', timestamp: new Date().toISOString() }
+        { id: 't0', role: 'system', text: 'Session ready. Synthetic hospitality state loaded.', timestamp: new Date().toISOString() },
+        { id: 't1', role: 'tilly', text: 'Good morning. I am ready to walk the shift — ask me anything or click Run Demo.', timestamp: new Date().toISOString() }
     ],
-    meta: {
-        engine: 'mock',
-        liveReady: false,
-        lastPrompt: null,
-        nextSuggestion: 'Ask for a quick operational rundown for the main restaurant.'
-    }
+    meta: { engine: 'mock', liveReady: false, lastPrompt: null, nextSuggestion: 'Ask for a shift rundown.' }
 };
 
-const fallbackConfig: ConfigResponse = {
-    liveReady: false,
-    defaultMode: 'mock',
-    suggestions: [
-        'Hey TillTech, give me a quick operational rundown for the main restaurant today. Have all the drivers clocked in for the evening shift?',
-        'Okay, send the customer an automated SMS apologizing for the delay and drop 50 loyalty points into their app wallet.',
-        'Check the stock levels in the main prep kitchen. How are we looking on fresh dough?',
-        'Do a 20% off QR code and push it as a notification to everyone who has our branded mobile app.'
-    ]
-};
+const fallbackCfg: ConfigResponse = { liveReady: false, defaultMode: 'mock', suggestions: ['Operational rundown', 'Check stock levels', 'Push a promo', 'Optimise routes'] };
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787';
-const LIVE_AUDIO_FLUSH_SAMPLES = 8192;
+// ── Helpers ────────────────────────────────────
+function mergeF32(chunks: Float32Array[]) { const total = chunks.reduce((s, c) => s + c.length, 0); const m = new Float32Array(total); let o = 0; for (const c of chunks) { m.set(c, o); o += c.length; } return m; }
 
-function mergeFloat32Chunks(chunks: Float32Array[]) {
-    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const merged = new Float32Array(totalLength);
-    let offset = 0;
+const TARGET_SR = 16000;
 
-    for (const chunk of chunks) {
-        merged.set(chunk, offset);
-        offset += chunk.length;
+function downsample(samples: Float32Array, fromRate: number, toRate: number): Float32Array {
+    if (fromRate === toRate) return samples;
+    const ratio = fromRate / toRate;
+    const newLen = Math.round(samples.length / ratio);
+    const out = new Float32Array(newLen);
+    for (let i = 0; i < newLen; i++) {
+        const srcIdx = i * ratio;
+        const lo = Math.floor(srcIdx);
+        const hi = Math.min(lo + 1, samples.length - 1);
+        const frac = srcIdx - lo;
+        out[i] = samples[lo] * (1 - frac) + samples[hi] * frac;
     }
-
-    return merged;
+    return out;
 }
 
-function encodeWavToBase64(samples: Float32Array, sampleRate: number) {
-    const pcmBuffer = new ArrayBuffer(44 + samples.length * 2);
-    const view = new DataView(pcmBuffer);
-
-    const writeString = (offset: number, value: string) => {
-        for (let index = 0; index < value.length; index += 1) {
-            view.setUint8(offset + index, value.charCodeAt(index));
-        }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + samples.length * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, samples.length * 2, true);
-
-    let offset = 44;
-    for (let index = 0; index < samples.length; index += 1) {
-        const clipped = Math.max(-1, Math.min(1, samples[index]));
-        view.setInt16(offset, clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff, true);
-        offset += 2;
+function encodePCM16(samples: Float32Array): string {
+    const buf = new ArrayBuffer(samples.length * 2);
+    const v = new DataView(buf);
+    for (let i = 0; i < samples.length; i++) {
+        const c = Math.max(-1, Math.min(1, samples[i]));
+        v.setInt16(i * 2, c < 0 ? c * 0x8000 : c * 0x7fff, true);
     }
-
-    const bytes = new Uint8Array(pcmBuffer);
-    let binary = '';
-    for (const byte of bytes) {
-        binary += String.fromCharCode(byte);
-    }
-
-    return btoa(binary);
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return btoa(bin);
 }
+function b64toBlob(b64: string, mime: string) { const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new Blob([bytes], { type: mime }); }
 
-function base64ToBlob(base64: string, mimeType: string) {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
+function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-    for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-    }
-
-    return new Blob([bytes], { type: mimeType });
-}
-
+// ── Component ──────────────────────────────────
 export function App() {
-    const [snapshot, setSnapshot] = useState<Snapshot>(fallbackSnapshot);
-    const [config, setConfig] = useState<ConfigResponse>(fallbackConfig);
-    const [status, setStatus] = useState<'connecting' | 'ready' | 'running' | 'offline'>('connecting');
-    const [prompt, setPrompt] = useState(fallbackConfig.suggestions[0]);
+    const [snap, setSnap] = useState<Snapshot>(fallbackSnap);
+    const [cfg, setCfg] = useState<ConfigResponse>(fallbackCfg);
+    const [status, setStatus] = useState<'connect' | 'ok' | 'busy' | 'off'>('connect');
+    const [prompt, setPrompt] = useState('');
     const [mode, setMode] = useState<'auto' | 'mock' | 'gemini' | 'live'>('mock');
-    const [errorMessage, setErrorMessage] = useState('');
-    const [isListening, setIsListening] = useState(false);
-    const [interimPrompt, setInterimPrompt] = useState('');
-    const [isSpeaking, setIsSpeaking] = useState(false);
-    const [liveTransport, setLiveTransport] = useState<LiveTransportState>('idle');
-    const [liveInputTranscript, setLiveInputTranscript] = useState('');
-    const [liveOutputTranscript, setLiveOutputTranscript] = useState('');
-    const [liveAudioMuted, setLiveAudioMuted] = useState(false);
+    const [err, setErr] = useState('');
+    const [listening, setListening] = useState(false);
+    const [interim, setInterim] = useState('');
+    const [speaking, setSpeaking] = useState(false);
+    const [demoRunning, setDemoRunning] = useState(false);
+    const [demoStep, setDemoStep] = useState(-1);
+    const [flashPanels, setFlashPanels] = useState<Set<string>>(new Set());
 
-    const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-    const liveEventsRef = useRef<EventSource | null>(null);
-    const mediaStreamRef = useRef<MediaStream | null>(null);
-    const audioContextRef = useRef<AudioContext | null>(null);
-    const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
-    const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
-    const sampleRateRef = useRef(24000);
-    const pendingAudioChunksRef = useRef<Float32Array[]>([]);
-    const pendingSampleCountRef = useRef(0);
-    const audioFlushInFlightRef = useRef(false);
-    const playbackQueueRef = useRef<AudioChunk[]>([]);
-    const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-    const liveAudioPlayingRef = useRef(false);
+    // Live state
+    const [liveState, setLiveState] = useState<string>('idle');
+    const [liveIn, setLiveIn] = useState('');
+    const [liveOut, setLiveOut] = useState('');
+    const [liveMuted, setLiveMuted] = useState(false);
 
+    // Refs
+    const recRef = useRef<SpeechRecognitionLike | null>(null);
+    const esRef = useRef<EventSource | null>(null);
+    const streamRef = useRef<MediaStream | null>(null);
+    const ctxRef = useRef<AudioContext | null>(null);
+    const srcRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const procRef = useRef<ScriptProcessorNode | null>(null);
+    const srRef = useRef(24000);
+    const bufRef = useRef<Float32Array[]>([]);
+    const bufCountRef = useRef(0);
+    const flushingRef = useRef(false);
+    const qRef = useRef<AudioChunk[]>([]);
+    const curAudioRef = useRef<HTMLAudioElement | null>(null);
+    const playingRef = useRef(false);
+    const demoCancelRef = useRef(false);
+    const railScrollRef = useRef<HTMLDivElement | null>(null);
+    const prevSnapRef = useRef<Snapshot>(fallbackSnap);
+
+    // ── Init ──
     useEffect(() => {
         Promise.all([
-            fetch(`${API_BASE}/api/config`).then((response) => response.json()),
-            fetch(`${API_BASE}/api/state`).then((response) => response.json())
-        ])
-            .then(([configResponse, stateResponse]) => {
-                const nextConfig = configResponse as ConfigResponse;
-                setConfig(nextConfig);
-                setMode(nextConfig.defaultMode);
-                setPrompt(nextConfig.suggestions[0] ?? fallbackConfig.suggestions[0]);
-                setSnapshot(stateResponse as Snapshot);
-                setStatus('ready');
-            })
-            .catch(() => {
-                setStatus('offline');
-                setErrorMessage('The local agent backend is offline. Start the server and refresh the page.');
-            });
-    }, []);
+            fetch(`${API}/api/config`).then(r => r.json()),
+            fetch(`${API}/api/state`).then(r => r.json())
+        ]).then(([c, s]) => {
+            const config = c as ConfigResponse;
+            setCfg(config);
+            setMode(config.defaultMode === 'live' ? 'live' : config.defaultMode === 'gemini' ? 'auto' : 'mock');
+            setSnap(s as Snapshot);
+            setStatus('ok');
+        }).catch(() => { setStatus('off'); setErr('Backend offline. Start the server and refresh.'); });
+        return () => { recRef.current?.stop(); window.speechSynthesis.cancel(); teardown(false); closeES(); };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Flash panels on change
     useEffect(() => {
-        return () => {
-            recognitionRef.current?.stop();
-            window.speechSynthesis.cancel();
-            teardownLiveCapture(false);
-            closeLiveEventStream();
-        };
-    }, []);
+        const changed = new Set<string>();
+        for (const p of snap.panels) {
+            const prev = prevSnapRef.current.panels.find(x => x.id === p.id);
+            if (prev && (prev.value !== p.value || prev.tone !== p.tone)) changed.add(p.id);
+        }
+        if (changed.size > 0) {
+            setFlashPanels(changed);
+            setTimeout(() => setFlashPanels(new Set()), 700);
+        }
+        prevSnapRef.current = snap;
+    }, [snap]);
 
+    // Auto-scroll rail
     useEffect(() => {
-        if (liveAudioMuted) {
-            playbackQueueRef.current = [];
-            currentAudioRef.current?.pause();
-            currentAudioRef.current = null;
-            liveAudioPlayingRef.current = false;
-            if (mode === 'live') {
-                setIsSpeaking(false);
-            }
-            return;
-        }
+        railScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    }, [snap.actions]);
 
-        void playQueuedAudio();
-    }, [liveAudioMuted, mode]);
-
-    function openLiveEventStream() {
-        if (liveEventsRef.current) {
-            return;
-        }
-
-        const eventSource = new EventSource(`${API_BASE}/api/live/events`);
-        eventSource.onmessage = (event) => {
-            const payload = JSON.parse(event.data) as LiveStreamEvent;
-
-            switch (payload.type) {
-                case 'live_status':
-                    setLiveTransport(payload.status);
-                    if (payload.status === 'speaking') {
-                        setIsSpeaking(true);
-                    }
-                    if (payload.status === 'waiting' || payload.status === 'connected' || payload.status === 'disconnected') {
-                        setIsSpeaking(false);
-                    }
-                    return;
-                case 'input_transcript':
-                    setLiveInputTranscript(payload.text);
-                    if (!payload.final) {
-                        setInterimPrompt(payload.text);
-                    } else {
-                        setInterimPrompt('');
-                    }
-                    return;
-                case 'output_transcript':
-                    setLiveOutputTranscript(payload.text);
-                    return;
-                case 'output_text':
-                    setLiveOutputTranscript((current) => (payload.text.length > current.length ? payload.text : current));
-                    return;
-                case 'model_audio':
-                    playbackQueueRef.current.push({ data: payload.data, mimeType: payload.mimeType });
-                    void playQueuedAudio();
-                    return;
-                case 'turn_complete':
-                    if (payload.inputText) {
-                        setPrompt(payload.inputText);
-                    }
-                    setStatus('running');
-                    return;
-                case 'live_error':
-                    setErrorMessage(payload.message);
-                    setLiveTransport('disconnected');
-                    return;
-                case 'snapshot':
-                    setSnapshot(payload.snapshot);
-                    setStatus('ready');
-                    setLiveInputTranscript('');
-                    setInterimPrompt('');
-                    return;
-            }
+    // ── SSE ──
+    function openES() {
+        if (esRef.current) return;
+        const es = new EventSource(`${API}/api/live/events`);
+        es.onmessage = (ev) => {
+            const p = JSON.parse(ev.data) as LiveStreamEvent;
+            if (p.type === 'live_status') { setLiveState(p.status); if (p.status === 'speaking') setSpeaking(true); if (['waiting', 'connected', 'disconnected'].includes(p.status)) setSpeaking(false); }
+            else if (p.type === 'input_transcript') { setLiveIn(p.text); p.final ? setInterim('') : setInterim(p.text); }
+            else if (p.type === 'output_transcript') setLiveOut(p.text);
+            else if (p.type === 'output_text') setLiveOut(cur => p.text.length > cur.length ? p.text : cur);
+            else if (p.type === 'model_audio') { qRef.current.push({ data: p.data, mimeType: p.mimeType }); void playQ(); }
+            else if (p.type === 'turn_complete') { if (p.inputText) setPrompt(p.inputText); setStatus('busy'); }
+            else if (p.type === 'live_error') { setErr(p.message); setLiveState('disconnected'); }
+            else if (p.type === 'snapshot') { setSnap(p.snapshot); setStatus('ok'); setLiveIn(''); setInterim(''); }
         };
-        eventSource.onerror = () => {
-            setLiveTransport('disconnected');
-        };
-
-        liveEventsRef.current = eventSource;
+        es.onerror = () => setLiveState('disconnected');
+        esRef.current = es;
     }
+    function closeES() { esRef.current?.close(); esRef.current = null; }
 
-    function closeLiveEventStream() {
-        liveEventsRef.current?.close();
-        liveEventsRef.current = null;
-    }
-
-    async function playQueuedAudio() {
-        if (liveAudioMuted || liveAudioPlayingRef.current) {
-            return;
-        }
-
-        const nextChunk = playbackQueueRef.current.shift();
-        if (!nextChunk) {
-            setIsSpeaking(false);
-            return;
-        }
-
-        liveAudioPlayingRef.current = true;
-        setIsSpeaking(true);
-        const blob = base64ToBlob(nextChunk.data, nextChunk.mimeType);
-        const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        currentAudioRef.current = audio;
-
-        audio.onended = () => {
-            URL.revokeObjectURL(audioUrl);
-            currentAudioRef.current = null;
-            liveAudioPlayingRef.current = false;
-            void playQueuedAudio();
-        };
-        audio.onerror = () => {
-            URL.revokeObjectURL(audioUrl);
-            currentAudioRef.current = null;
-            liveAudioPlayingRef.current = false;
-            setIsSpeaking(false);
-            setErrorMessage('The browser could not play the streamed model audio chunk.');
-            void playQueuedAudio();
-        };
-
+    // ── Audio Playback (raw PCM from Gemini Live) ──
+    async function playQ() {
+        if (liveMuted || playingRef.current) return;
+        const c = qRef.current.shift(); if (!c) { setSpeaking(false); return; }
+        playingRef.current = true; setSpeaking(true);
         try {
-            await audio.play();
-            setLiveTransport('speaking');
-        } catch {
-            URL.revokeObjectURL(audioUrl);
-            currentAudioRef.current = null;
-            liveAudioPlayingRef.current = false;
-            setIsSpeaking(false);
-            setErrorMessage('Live model audio playback was blocked by the browser. Click the mic first, then try again.');
+            // Decode base64 PCM to Int16 samples
+            const bin = atob(c.data);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            const int16 = new Int16Array(bytes.buffer);
+            // Convert to Float32
+            const float32 = new Float32Array(int16.length);
+            for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+            // Determine output sample rate from mimeType (e.g. audio/pcm;rate=24000)
+            const rateMatch = c.mimeType.match(/rate=(\d+)/);
+            const outSr = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
+            // Create AudioContext and play
+            const playCtx = new (window.AudioContext ?? window.webkitAudioContext!)({ sampleRate: outSr });
+            const abuf = playCtx.createBuffer(1, float32.length, outSr);
+            abuf.getChannelData(0).set(float32);
+            const src = playCtx.createBufferSource();
+            src.buffer = abuf;
+            src.connect(playCtx.destination);
+            src.onended = () => { playCtx.close().catch(() => {}); playingRef.current = false; void playQ(); };
+            src.start();
+            setLiveState('speaking');
+        } catch (e) {
+            console.error('Audio playback failed:', e);
+            playingRef.current = false; setSpeaking(false); void playQ();
         }
     }
 
-    async function flushBufferedAudio() {
-        if (audioFlushInFlightRef.current || pendingSampleCountRef.current === 0) {
-            return;
-        }
+    // ── Mic ──
+    async function flushBuf() {
+        if (flushingRef.current || bufCountRef.current === 0) return;
+        const samples = mergeF32(bufRef.current); bufRef.current = []; bufCountRef.current = 0; flushingRef.current = true;
+        const pcm16 = downsample(samples, srRef.current, TARGET_SR);
+        try { await fetch(`${API}/api/live/audio`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64: encodePCM16(pcm16), mimeType: `audio/pcm;rate=${TARGET_SR}` }) }); }
+        catch { setErr('Audio send failed.'); setLiveState('disconnected'); }
+        finally { flushingRef.current = false; if (bufCountRef.current >= FLUSH_SAMPLES) void flushBuf(); }
+    }
 
-        const samples = mergeFloat32Chunks(pendingAudioChunksRef.current);
-        pendingAudioChunksRef.current = [];
-        pendingSampleCountRef.current = 0;
-        audioFlushInFlightRef.current = true;
+    function pushAudio(data: Float32Array) { const c = new Float32Array(data.length); c.set(data); bufRef.current.push(c); bufCountRef.current += c.length; if (bufCountRef.current >= FLUSH_SAMPLES) void flushBuf(); }
 
+    async function teardown(sendStop: boolean) {
+        procRef.current?.disconnect(); srcRef.current?.disconnect(); procRef.current = null; srcRef.current = null;
+        streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null;
+        if (ctxRef.current) { await ctxRef.current.close().catch(() => undefined); ctxRef.current = null; }
+        bufRef.current = []; bufCountRef.current = 0;
+        if (sendStop) { await fetch(`${API}/api/live/audio/stop`, { method: 'POST' }).catch(() => undefined); setLiveState('processing'); }
+    }
+
+    async function startLive() {
+        openES(); setErr(''); setLiveState('connecting');
         try {
-            await fetch(`${API_BASE}/api/live/audio`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    audioBase64: encodeWavToBase64(samples, sampleRateRef.current),
-                    mimeType: 'audio/wav'
-                })
+            await fetch(`${API}/api/live/session/start`, { method: 'POST' });
+            const s = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+            const Ctor = window.AudioContext ?? window.webkitAudioContext; const ctx = new Ctor();
+            const src = ctx.createMediaStreamSource(s); const proc = ctx.createScriptProcessor(4096, 1, 1);
+            srRef.current = ctx.sampleRate; streamRef.current = s; ctxRef.current = ctx; srcRef.current = src; procRef.current = proc;
+            proc.onaudioprocess = (e) => pushAudio(e.inputBuffer.getChannelData(0));
+            src.connect(proc); proc.connect(ctx.destination);
+            setLiveState('capturing'); setListening(true); setLiveIn(''); setLiveOut('');
+        } catch (e) { setListening(false); setLiveState('disconnected'); setErr(e instanceof Error ? e.message : 'Mic failed.'); await teardown(false); }
+    }
+
+    async function stopLive() { setListening(false); await flushBuf(); await teardown(true); }
+
+    // ── Submit ──
+    const sendPromptDirect = async (text: string, modeOverride?: string) => {
+        if (!text.trim()) return;
+        setStatus('busy'); setErr('');
+        try {
+            const res = await fetch(`${API}/api/session/respond`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: text, mode: modeOverride ?? mode })
             });
-        } catch {
-            setErrorMessage('Failed to send live microphone audio to the backend.');
-            setLiveTransport('disconnected');
-        } finally {
-            audioFlushInFlightRef.current = false;
-            if (pendingSampleCountRef.current >= LIVE_AUDIO_FLUSH_SAMPLES) {
-                void flushBufferedAudio();
-            }
-        }
-    }
+            const data = await res.json();
+            if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Request failed.');
+            setSnap(data as Snapshot);
+            setStatus('ok'); setInterim('');
+        } catch (e) { setStatus('off'); setErr(e instanceof Error ? e.message : 'Error.'); }
+    };
+    const sendPromptRef = useRef(sendPromptDirect);
+    sendPromptRef.current = sendPromptDirect;
 
-    function appendAudioChunk(channelData: Float32Array) {
-        const copy = new Float32Array(channelData.length);
-        copy.set(channelData);
-        pendingAudioChunksRef.current.push(copy);
-        pendingSampleCountRef.current += copy.length;
+    function handleSubmit(ev: FormEvent) { ev.preventDefault(); void sendPromptRef.current(prompt); setPrompt(''); }
 
-        if (pendingSampleCountRef.current >= LIVE_AUDIO_FLUSH_SAMPLES) {
-            void flushBufferedAudio();
-        }
-    }
-
-    async function teardownLiveCapture(sendStopSignal: boolean) {
-        processorNodeRef.current?.disconnect();
-        sourceNodeRef.current?.disconnect();
-        processorNodeRef.current = null;
-        sourceNodeRef.current = null;
-
-        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
-
-        if (audioContextRef.current) {
-            await audioContextRef.current.close().catch(() => undefined);
-            audioContextRef.current = null;
-        }
-
-        pendingAudioChunksRef.current = [];
-        pendingSampleCountRef.current = 0;
-
-        if (sendStopSignal) {
-            await fetch(`${API_BASE}/api/live/audio/stop`, { method: 'POST' }).catch(() => undefined);
-            setLiveTransport('processing');
-        }
-    }
-
-    async function startLiveCapture() {
-        openLiveEventStream();
-        setErrorMessage('');
-        setLiveTransport('connecting');
-
-        try {
-            await fetch(`${API_BASE}/api/live/session/start`, { method: 'POST' });
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }
-            });
-            const AudioContextCtor = window.AudioContext ?? window.webkitAudioContext;
-            const audioContext = new AudioContextCtor();
-            const source = audioContext.createMediaStreamSource(stream);
-            const processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-            sampleRateRef.current = audioContext.sampleRate;
-            mediaStreamRef.current = stream;
-            audioContextRef.current = audioContext;
-            sourceNodeRef.current = source;
-            processorNodeRef.current = processor;
-
-            processor.onaudioprocess = (event) => {
-                appendAudioChunk(event.inputBuffer.getChannelData(0));
-            };
-
-            source.connect(processor);
-            processor.connect(audioContext.destination);
-            setLiveTransport('capturing');
-            setIsListening(true);
-            setLiveInputTranscript('');
-            setLiveOutputTranscript('');
-        } catch (error) {
-            setIsListening(false);
-            setLiveTransport('disconnected');
-            setErrorMessage(error instanceof Error ? error.message : 'Unable to start live microphone capture.');
-            await teardownLiveCapture(false);
-        }
-    }
-
-    async function stopLiveCapture() {
-        setIsListening(false);
-        await flushBufferedAudio();
-        await teardownLiveCapture(true);
-    }
-
-    async function submitPrompt(event: FormEvent) {
-        event.preventDefault();
-        if (!prompt.trim()) {
-            return;
-        }
-
-        setStatus('running');
-        setErrorMessage('');
-
-        try {
-            const response = await fetch(`${API_BASE}/api/session/respond`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ prompt, mode })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(typeof data.error === 'string' ? data.error : 'Agent request failed.');
-            }
-
-            setSnapshot(data as Snapshot);
-            setStatus('ready');
-            setInterimPrompt('');
-        } catch (error) {
-            setStatus('offline');
-            setErrorMessage(error instanceof Error ? error.message : 'Unknown agent error.');
-        }
+    // Reset state without touching demo flags
+    async function _resetState() {
+        await teardown(false); recRef.current?.stop(); setListening(false);
+        setLiveIn(''); setLiveOut(''); qRef.current = []; curAudioRef.current?.pause(); curAudioRef.current = null; playingRef.current = false;
+        const res = await fetch(`${API}/api/scenario/reset`, { method: 'POST' });
+        const snapData = await res.json() as Snapshot;
+        setSnap(snapData);
+        setStatus('ok'); setErr(''); setLiveState('idle');
     }
 
     async function resetScenario() {
-        await teardownLiveCapture(false);
-        recognitionRef.current?.stop();
-        setIsListening(false);
-        setLiveInputTranscript('');
-        setLiveOutputTranscript('');
-        playbackQueueRef.current = [];
-        currentAudioRef.current?.pause();
-        currentAudioRef.current = null;
-        liveAudioPlayingRef.current = false;
-
-        const response = await fetch(`${API_BASE}/api/scenario/reset`, { method: 'POST' });
-        const data = await response.json();
-        setSnapshot(data as Snapshot);
-        setStatus('ready');
-        setErrorMessage('');
-        setLiveTransport('idle');
+        demoCancelRef.current = true; setDemoRunning(false); setDemoStep(-1);
+        await _resetState();
     }
 
-    function applySuggestion(value: string) {
-        setPrompt(value);
+    // ── Auto Demo ──
+    async function runDemo() {
+        demoCancelRef.current = false;
+        // Reset state first WITHOUT killing demo flags
+        await _resetState();
+        setDemoRunning(true); setDemoStep(0);
+        await sleep(600);
+
+        for (let i = 0; i < DEMO_SCRIPT.length; i++) {
+            if (demoCancelRef.current) break;
+            setDemoStep(i);
+            setPrompt(DEMO_SCRIPT[i].prompt);
+            await sleep(1500); // Show the prompt visually
+            if (demoCancelRef.current) break;
+            setPrompt('');
+            await sendPromptRef.current(DEMO_SCRIPT[i].prompt, 'mock');
+            if (demoCancelRef.current) break;
+            await sleep(DEMO_SCRIPT[i].delay);
+        }
+        setDemoRunning(false); setDemoStep(-1);
     }
 
-    function toggleSpeechPlayback() {
-        if (mode === 'live' && config.liveSessionReady) {
-            setLiveAudioMuted((current) => !current);
-            return;
-        }
-
-        if (isSpeaking) {
-            window.speechSynthesis.cancel();
-            setIsSpeaking(false);
-            return;
-        }
-
-        const utterance = new SpeechSynthesisUtterance(snapshot.speaking);
-        utterance.onend = () => setIsSpeaking(false);
-        utterance.onerror = () => setIsSpeaking(false);
-        setIsSpeaking(true);
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(utterance);
+    // ── Voice ──
+    function toggleSpeech() {
+        if (mode === 'live' && cfg.liveSessionReady) { setLiveMuted(c => !c); return; }
+        if (speaking) { window.speechSynthesis.cancel(); setSpeaking(false); return; }
+        const u = new SpeechSynthesisUtterance(snap.speaking);
+        u.onend = () => setSpeaking(false); u.onerror = () => setSpeaking(false);
+        setSpeaking(true); window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
     }
 
-    function toggleBrowserSpeechRecognition() {
-        const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-
-        if (!Recognition) {
-            setErrorMessage('Browser speech recognition is not available in this browser.');
-            return;
-        }
-
-        if (isListening && recognitionRef.current) {
-            recognitionRef.current.stop();
-            recognitionRef.current = null;
-            setIsListening(false);
-            return;
-        }
-
-        const recognition = new Recognition();
-        recognition.continuous = false;
-        recognition.interimResults = true;
-        recognition.lang = 'en-GB';
-        recognition.onresult = (event) => {
-            let finalText = '';
-            let nextInterim = '';
-
-            for (let index = event.resultIndex; index < event.results.length; index += 1) {
-                const result = event.results[index];
-                const transcript = result[0]?.transcript ?? '';
-                if (result.isFinal) {
-                    finalText += transcript;
-                } else {
-                    nextInterim += transcript;
-                }
-            }
-
-            if (finalText.trim()) {
-                setPrompt((current) => (current.trim() ? `${current.trim()} ${finalText.trim()}` : finalText.trim()));
-            }
-            setInterimPrompt(nextInterim.trim());
+    function toggleBrowserMic() {
+        const R = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+        if (!R) { setErr('Speech recognition not available.'); return; }
+        if (listening && recRef.current) { recRef.current.stop(); recRef.current = null; setListening(false); return; }
+        const rec = new R(); rec.continuous = false; rec.interimResults = true; rec.lang = 'en-GB';
+        let finalText = '';
+        rec.onresult = (ev) => { let fin = '', int = ''; for (let i = ev.resultIndex; i < ev.results.length; i++) { const t = ev.results[i][0]?.transcript ?? ''; ev.results[i].isFinal ? (fin += t) : (int += t); } if (fin.trim()) { finalText = fin.trim(); setPrompt(fin.trim()); } setInterim(int.trim()); };
+        rec.onerror = (e) => { setErr(e.error ? `Mic: ${e.error}` : 'Mic failed.'); setListening(false); recRef.current = null; };
+        rec.onend = () => {
+            setListening(false); setInterim(''); recRef.current = null;
+            // Auto-submit when speech recognition finishes
+            if (finalText.trim()) { void sendPromptRef.current(finalText); setPrompt(''); }
         };
-        recognition.onerror = (event) => {
-            setErrorMessage(event.error ? `Speech recognition error: ${event.error}` : 'Speech recognition failed.');
-            setIsListening(false);
-            recognitionRef.current = null;
-        };
-        recognition.onend = () => {
-            setIsListening(false);
-            setInterimPrompt('');
-            recognitionRef.current = null;
-        };
-
-        recognitionRef.current = recognition;
-        setErrorMessage('');
-        setIsListening(true);
-        recognition.start();
+        recRef.current = rec; setErr(''); setListening(true); rec.start();
     }
 
-    function toggleVoiceCapture() {
-        if (mode === 'live' && config.liveSessionReady) {
-            if (isListening || liveTransport === 'capturing' || liveTransport === 'connecting') {
-                void stopLiveCapture();
-                return;
-            }
-
-            void startLiveCapture();
-            return;
-        }
-
-        toggleBrowserSpeechRecognition();
+    function toggleVoice() {
+        if (mode === 'live' && cfg.liveSessionReady) { if (listening || liveState === 'capturing' || liveState === 'connecting') { void stopLive(); return; } void startLive(); return; }
+        toggleBrowserMic();
     }
 
-    const availableModes = (['live', 'auto', 'gemini', 'mock'] as const).filter((option) => {
-        if (option === 'live') {
-            return Boolean(config.liveSessionReady);
-        }
-        if (option === 'gemini') {
-            return config.liveReady;
-        }
-        return true;
-    });
-
-    const liveCaption = liveOutputTranscript || snapshot.speaking;
-    const liveStatusLabel =
-        liveTransport === 'capturing'
-            ? 'Streaming mic audio'
-            : liveTransport === 'processing'
-                ? 'Processing live turn'
-                : liveTransport === 'speaking'
-                    ? 'Model audio streaming'
-                    : liveTransport === 'waiting'
-                        ? 'Listening for next turn'
-                        : liveTransport === 'connecting'
-                            ? 'Opening live session'
-                            : status === 'running'
-                                ? 'Processing live turn'
-                                : status === 'offline'
-                                    ? 'Backend offline'
-                                    : snapshot.meta.engine === 'live'
-                                        ? 'Live session active'
-                                        : snapshot.meta.engine === 'gemini'
-                                            ? 'Gemini active'
-                                            : 'Mock planner active';
+    // ── Derived ──
+    const orbState = listening || liveState === 'capturing' ? 'listening' : status === 'busy' || liveState === 'processing' ? 'processing' : speaking || liveState === 'speaking' ? 'speaking' : 'idle';
+    const orbTag = orbState === 'listening' ? '● Listening' : orbState === 'processing' ? '◌ Thinking' : orbState === 'speaking' ? '◉ Speaking' : '○ Click to talk';
+    const dotClass = status === 'off' ? 'offline' : status === 'busy' || liveState === 'capturing' || liveState === 'speaking' ? 'running' : '';
+    const modes = (['live', 'auto', 'mock'] as const).filter(m => { if (m === 'live') return Boolean(cfg.liveSessionReady); return true; });
+    const displayText = liveOut || snap.speaking;
 
     return (
         <main className="shell">
-            <section className="hero">
-                <div className="heroCopy">
-                    <p className="eyebrow">Live Operations Command Surface</p>
-                    <h1>Tilly Live Ops</h1>
-                    <p className="lede">
-                        A voice-first business agent for hospitality operators. Ask once, keep context, take action, and watch the shift state update in real time.
-                    </p>
-                    <div className="statRow">
-                        {snapshot.heroStats.map((stat) => (
-                            <div key={stat.id} className="heroStat">
-                                <span>{stat.label}</span>
-                                <strong>{stat.value}</strong>
+            {/* ── Top Bar ── */}
+            <header className="topBar">
+                <div className="topBarLeft">
+                    <div className="topBarLogo">Tilly <span>Live Ops</span></div>
+                    <span className={`statusDot ${dotClass}`} />
+                    <span className="statusLabel">{demoRunning ? `Demo step ${demoStep + 1}/${DEMO_SCRIPT.length}` : snap.meta.engine}</span>
+                </div>
+                <div className="topBarRight">
+                    <button className={`demoBtn ${demoRunning ? 'running' : ''}`} onClick={demoRunning ? () => { demoCancelRef.current = true; } : () => void runDemo()} disabled={status === 'off'}>
+                        {demoRunning ? '■ Stop' : '▶ Run Demo'}
+                    </button>
+                    <div className="modeSwitch">
+                        {modes.map(m => <button key={m} className={`modeBtn ${m === mode ? 'active' : ''}`} onClick={() => setMode(m)}>{m}</button>)}
+                    </div>
+                    <button className="resetBtn" onClick={() => void resetScenario()}>Reset</button>
+                </div>
+            </header>
+
+            {/* ── Stage ── */}
+            <section className="stage">
+                {/* Left — Panels */}
+                <div className="panelCol">
+                    {snap.panels.map(p => (
+                        <article key={p.id} className={`pCard tone-${p.tone} ${flashPanels.has(p.id) ? 'flash' : ''}`}>
+                            <div className="pLabel"><span className="pIcon">{ICONS[p.id] ?? '📊'}</span> {p.label}</div>
+                            <div className="pRow">
+                                <span className="pVal">{p.value}</span>
+                                <span className="pMetric">{p.metric}</span>
+                            </div>
+                            <div className="pDetail">{p.detail}</div>
+                        </article>
+                    ))}
+                </div>
+
+                {/* Centre — Orb */}
+                <div className="centre">
+                    <div className="chips">
+                        {snap.heroStats.map(s => (
+                            <div key={s.id} className="statChip">
+                                <span className="statChipL">{s.label}</span>
+                                <span className="statChipV">{s.value}</span>
                             </div>
                         ))}
                     </div>
-                </div>
-                <div className="voiceBar">
-                    <div className="voiceStatusRow">
-                        <span className={`dot dot-${status === 'offline' ? 'offline' : liveTransport === 'capturing' || liveTransport === 'speaking' ? 'running' : 'ready'}`} />
-                        <span>{liveStatusLabel}</span>
-                    </div>
-                    <span className="chip">{config.liveSessionReady ? 'Gemini Live audio ready' : config.liveReady ? 'Gemini configured' : 'Mock fallback'}</span>
-                    <div className={`signalBars signalBars-${liveTransport}`}>
-                        <span />
-                        <span />
-                        <span />
-                        <span />
-                        <span />
-                    </div>
-                    <div className="voiceTranscriptCard">
-                        <p className="voiceTranscriptLabel">Operator</p>
-                        <p>{liveInputTranscript || interimPrompt || 'Start the mic to stream a live spoken turn.'}</p>
-                    </div>
-                    <div className="voiceTranscriptCard voiceTranscriptCardOutput">
-                        <p className="voiceTranscriptLabel">Tilly</p>
-                        <p>{liveCaption}</p>
-                    </div>
-                    <div className="voiceControls">
-                        <button type="button" className={isListening ? 'secondaryButton activeState' : 'secondaryButton'} onClick={toggleVoiceCapture}>
-                            {mode === 'live' && config.liveSessionReady ? (isListening ? 'Stop live mic' : 'Start live mic') : isListening ? 'Stop mic' : 'Start mic'}
-                        </button>
-                        <button type="button" className={isSpeaking ? 'secondaryButton activeState' : 'secondaryButton'} onClick={toggleSpeechPlayback}>
-                            {mode === 'live' && config.liveSessionReady ? (liveAudioMuted ? 'Unmute model audio' : 'Mute model audio') : isSpeaking ? 'Stop speech' : 'Play response'}
-                        </button>
-                    </div>
-                </div>
-            </section>
 
-            <section className="commandDeck">
-                <article className="summaryCard summaryCardLarge">
-                    <p className="cardLabel">Live Summary</p>
-                    <h2>{snapshot.summary}</h2>
-                    <p>{mode === 'live' && liveOutputTranscript ? liveOutputTranscript : snapshot.speaking}</p>
-                    <div className="metaRow">
-                        <span>Last prompt: {snapshot.meta.lastPrompt ?? 'No operator turn yet'}</span>
-                        <span>Next move: {snapshot.meta.nextSuggestion}</span>
+                    <div className="orbWrap" onClick={toggleVoice}>
+                        <div className="halo" />
+                        <div className="ring ring1" />
+                        <div className="ring ring2" />
+                        <div className="ring ring3" />
+                        <div className={`orb ${orbState}`} />
                     </div>
-                </article>
+                    <div className={`orbTag ${orbState !== 'idle' ? 'on' : ''}`}>{orbTag}</div>
 
-                <form className="composerCard" onSubmit={submitPrompt}>
-                    <div className="composerHeader">
-                        <p className="cardLabel">Operator Turn</p>
-                        <div className="modeSwitch">
-                            {availableModes.map((option) => (
-                                <button
-                                    key={option}
-                                    type="button"
-                                    className={option === mode ? 'modeButton active' : 'modeButton'}
-                                    onClick={() => setMode(option)}
-                                >
-                                    {option}
-                                </button>
-                            ))}
+                    <div className="liveText">
+                        {(liveIn || interim) && (
+                            <div className="bubble op">
+                                <div className="bubbleRole">Operator</div>
+                                <div className="bubbleText">{liveIn || interim}</div>
+                            </div>
+                        )}
+                        {demoRunning && demoStep >= 0 && prompt && (
+                            <div className="bubble op">
+                                <div className="bubbleRole">Operator</div>
+                                <div className="bubbleText">{prompt}</div>
+                            </div>
+                        )}
+                        <div className="bubble tilly">
+                            <div className="bubbleRole">Tilly</div>
+                            <div className="bubbleText">{displayText}</div>
                         </div>
+                        {snap.summary !== snap.speaking && <div className="summaryLine">{snap.summary}</div>}
                     </div>
+                </div>
 
-                    <textarea
-                        value={prompt}
-                        onChange={(event) => setPrompt(event.target.value)}
-                        rows={6}
-                        placeholder="Ask Tilly to review, decide, and act across operations."
-                    />
-
-                    {interimPrompt ? <p className="interimText">Listening: {interimPrompt}</p> : null}
-
-                    <div className="suggestionList">
-                        {config.suggestions.map((entry) => (
-                            <button key={entry} type="button" className="suggestionChip" onClick={() => applySuggestion(entry)}>
-                                {entry}
-                            </button>
-                        ))}
-                    </div>
-
-                    {errorMessage ? <p className="errorText">{errorMessage}</p> : null}
-
-                    <div className="composerActions">
-                        <button type="submit">Send operator turn</button>
-                        <button type="button" className="secondaryButton" onClick={() => void resetScenario()}>Reset scenario</button>
-                    </div>
-                </form>
-            </section>
-
-            <section className="stage">
-                <aside className="transcriptCard">
-                    <p className="cardLabel">Conversation</p>
-                    <ul>
-                        {snapshot.transcript.map((entry) => (
-                            <li key={entry.id} className={`transcriptEntry role-${entry.role}`}>
-                                <span className="transcriptRole">{entry.role}</span>
-                                <p>{entry.text}</p>
-                            </li>
-                        ))}
-                    </ul>
-                </aside>
-
-                <aside className="actionsCard">
-                    <p className="cardLabel">Action Timeline</p>
-                    <ul>
-                        {snapshot.actions.map((action) => (
-                            <li key={action.id} className={`${action.status} domain-${action.domain}`}>
-                                <div>
-                                    <span>{action.title}</span>
-                                    <p>{action.detail}</p>
+                {/* Right — Actions + Transcript */}
+                <aside className="rail">
+                    <div className="railTitle">Action Timeline</div>
+                    <div className="railScroll" ref={railScrollRef}>
+                        {snap.actions.map((a, i) => (
+                            <div key={a.id} className={`aCard ${i === 0 && snap.actions.length > 1 ? 'fresh' : ''}`} style={{ animationDelay: `${i * 80}ms` }}>
+                                <div className="aHead">
+                                    <span className="aTitle">{a.title}</span>
+                                    <span className={`aBadge ${a.status}`}>{a.status === 'done' ? '✓' : '⏳'}</span>
                                 </div>
-                                <strong>{action.status}</strong>
-                            </li>
+                                <div className="aDetail">{a.detail}</div>
+                                <div className="aDomain">{a.domain}</div>
+                            </div>
                         ))}
-                    </ul>
+                    </div>
+                    <div className="railSection">Conversation</div>
+                    <div className="railScroll">
+                        {snap.transcript.slice().reverse().map(t => (
+                            <div key={t.id} className={`tEntry r-${t.role}`}>
+                                <span className="tRole">{t.role}</span>
+                                <div className="tText">{t.text}</div>
+                            </div>
+                        ))}
+                    </div>
                 </aside>
             </section>
 
-            <section className="panelGrid">
-                {snapshot.panels.map((panel) => (
-                    <article key={panel.id} className={`panelCard tone-${panel.tone}`}>
-                        <p className="cardLabel">{panel.label}</p>
-                        <div className="panelValueRow">
-                            <h3>{panel.value}</h3>
-                            <span className="metricChip">{panel.metric}</span>
-                        </div>
-                        <p>{panel.detail}</p>
-                    </article>
-                ))}
-            </section>
+            {/* ── Composer ── */}
+            <form className="composer" onSubmit={handleSubmit}>
+                <button type="button" className={`iconBtn ${listening ? 'on' : ''}`} onClick={toggleVoice} title="Mic">🎤</button>
+                <button type="button" className={`iconBtn ${speaking ? 'speaking' : ''}`} onClick={toggleSpeech} title="Audio">{speaking ? '🔊' : '🔈'}</button>
+                <input className="cInput" type="text" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Ask Tilly to review, decide, and act…" disabled={demoRunning} />
+                <div className="chipRow">
+                    {cfg.suggestions.map(s => <button key={s} type="button" className="chip" onClick={() => setPrompt(s)}>{s}</button>)}
+                </div>
+                <button type="submit" className="sendBtn" disabled={status === 'busy' || !prompt.trim() || demoRunning}>
+                    {status === 'busy' ? '⏳' : 'Send'}
+                </button>
+                {err && <span className="errMsg">{err}</span>}
+            </form>
         </main>
     );
 }
