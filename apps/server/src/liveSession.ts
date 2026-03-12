@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import type { AgentPlan, PlannedAction, Snapshot } from './types.js';
 
+
 type TextSessionLike = {
     sendClientContent(params: unknown): void;
     close(): void;
@@ -8,6 +9,7 @@ type TextSessionLike = {
 
 type AudioSessionLike = {
     sendRealtimeInput(params: unknown): void;
+    sendToolResponse(params: unknown): void;
     close(): void;
 };
 
@@ -21,9 +23,15 @@ type InlineDataLike = {
     mimeType?: string;
 };
 
+type FunctionCallLike = {
+    name: string;
+    args?: Record<string, unknown>;
+};
+
 type PartLike = {
     text?: string;
     inlineData?: InlineDataLike;
+    functionCall?: FunctionCallLike;
 };
 
 type AudioServerMessage = {
@@ -46,7 +54,8 @@ export type LiveStreamEvent =
     | { type: 'output_text'; text: string }
     | { type: 'model_audio'; data: string; mimeType: string }
     | { type: 'turn_complete'; inputText: string; outputText: string }
-    | { type: 'live_error'; message: string };
+    | { type: 'live_error'; message: string }
+    | { type: 'function_call'; id: string; name: string; args: Record<string, unknown> };
 
 type PendingTurn = {
     resolve: (value: AgentPlan | null) => void;
@@ -250,6 +259,28 @@ function handleAudioMessage(event: AudioServerMessage) {
             });
             emitLiveEvent({ type: 'live_status', status: 'speaking' });
         }
+
+        if (part.functionCall) {
+            const callId = 'fc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+            console.log('[LIVE] Function call:', part.functionCall.name, part.functionCall.args);
+            emitLiveEvent({
+                type: 'function_call',
+                id: callId,
+                name: part.functionCall.name,
+                args: part.functionCall.args ?? {}
+            });
+
+            // Send tool response back to model so it can continue
+            if (audioSession) {
+                audioSession.sendToolResponse({
+                    functionResponses: [{
+                        id: callId,
+                        name: part.functionCall.name,
+                        response: { result: 'Action completed successfully.' }
+                    }]
+                });
+            }
+        }
     }
 
     if (content.turnComplete) {
@@ -292,7 +323,28 @@ export async function startLiveAudioSession() {
                     }
                 }
             },
-            systemInstruction: 'You are Tilly, a calm hospitality operations agent for restaurant and retail operators. Speak with clear, concise operational updates and direct next actions. Keep spoken responses short enough for a live demo.'
+            systemInstruction: [
+                'You are Tilly, the live operations agent for TillTech, a hospitality technology platform.',
+                'You are speaking directly to a restaurant or hospitality business operator through a voice interface. You are confident, calm, operational, and fast. You are NOT a generic chatbot. You are a business operations agent who can see and control all aspects of their business.',
+                'Your capabilities (use the tools provided): Check driver status and delivery delays. Monitor inventory levels. Halt kitchen items to conserve stock. Send customer apology SMS and add loyalty points. Draft and send marketing promotions. Optimise delivery routes. Record attendance notes.',
+                'When the operator asks you to do something, USE the appropriate tool. Always call tools when the operator requests an action. Do not just describe what you would do, actually do it by calling the tool.',
+                'Current operational state: 4 evening drivers active with 1 delayed by traffic. Fresh dough at 20 portions which is below the Friday-night threshold. Kitchen nominal with no blocked items. Marketing idle with no active campaigns. 1 staff lateness flag. Logistics on default route planning.',
+                'Keep responses short and operational. Confirm actions taken. Reference specific data. Sound like you are running the shift, not explaining it.'
+            ].join(' '),
+            tools: [{
+                functionDeclarations: [
+                    { name: 'check_driver_status', description: 'Check the status of all drivers, their shifts, delays, and delivery ETAs.' },
+                    { name: 'send_customer_apology', description: 'Send an automated SMS apology to a customer about a delayed delivery.', parameters: { type: 'OBJECT', properties: { reason: { type: 'STRING', description: 'Reason for the apology' } } } },
+                    { name: 'add_loyalty_points', description: 'Add loyalty compensation points to a customer app wallet.', parameters: { type: 'OBJECT', properties: { points: { type: 'NUMBER', description: 'Number of points to add' } } } },
+                    { name: 'check_inventory_status', description: 'Check current inventory and stock levels in the prep kitchen.' },
+                    { name: 'halt_kitchen_item', description: 'Halt preparation of a specific menu item to conserve ingredients.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'The menu item to halt, e.g. garlic bread' } }, required: ['item'] } },
+                    { name: 'draft_promo', description: 'Draft a targeted promotional campaign.', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Description of the promotion' } }, required: ['campaign'] } },
+                    { name: 'send_marketing_push', description: 'Send a push notification promotion to all branded mobile app users.' },
+                    { name: 'record_attendance_note', description: 'Record a staff attendance exception such as lateness.', parameters: { type: 'OBJECT', properties: { staff: { type: 'STRING', description: 'Staff member name' }, note: { type: 'STRING', description: 'Attendance note' } } } },
+                    { name: 'reorder_supplier_item', description: 'Place a reorder with the primary supplier for a low-stock item.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Item to reorder' } } } },
+                    { name: 'optimise_driver_routes', description: 'Optimise active delivery routes based on current traffic conditions.' }
+                ]
+            }]
         },
         callbacks: {
             onopen: () => {

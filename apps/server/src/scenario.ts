@@ -75,7 +75,7 @@ function pushAction(snapshot: Snapshot, title: string, domain: string, detail: s
     ].slice(0, 8);
 }
 
-function applyAction(snapshot: Snapshot, action: PlannedAction) {
+export function applyAction(snapshot: Snapshot, action: PlannedAction) {
     switch (action.tool) {
         case 'check_driver_status': {
             snapshot.panels = updatePanel(snapshot.panels, 'drivers', {

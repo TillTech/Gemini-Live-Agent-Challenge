@@ -10,7 +10,7 @@ import {
     subscribeLiveEvents,
     type LiveStreamEvent
 } from './liveSession.js';
-import { applyPlan, createInitialSnapshot, createMockPlan } from './scenario.js';
+import { applyAction, applyPlan, createInitialSnapshot, createMockPlan } from './scenario.js';
 import type { ResponseMode, Snapshot } from './types.js';
 
 const port = Number(process.env.PORT ?? 8787);
@@ -31,18 +31,11 @@ function broadcastLiveEvent(event: LiveStreamEvent | { type: 'snapshot'; snapsho
 subscribeLiveEvents((event) => {
     broadcastLiveEvent(event);
 
-    if (event.type === 'turn_complete' && event.inputText) {
-        void (async () => {
-            try {
-                const nextState = await respondToPrompt(event.inputText, liveReady ? 'gemini' : 'mock');
-                broadcastLiveEvent({ type: 'snapshot', snapshot: nextState });
-            } catch (error) {
-                broadcastLiveEvent({
-                    type: 'live_error',
-                    message: error instanceof Error ? error.message : 'Failed to apply live audio turn.'
-                });
-            }
-        })();
+    if (event.type === 'function_call') {
+        // Execute the tool and update state
+        const action = { tool: event.name, args: event.args };
+        applyAction(state, action);
+        broadcastLiveEvent({ type: 'snapshot', snapshot: state });
     }
 });
 
@@ -194,6 +187,12 @@ const server = http.createServer((request, response) => {
 
         if (request.method === 'POST' && request.url === '/api/live/audio/stop') {
             await stopLiveAudioInput();
+            sendJson(response, { ok: true });
+            return;
+        }
+
+        if (request.method === 'POST' && request.url === '/api/live/session/close') {
+            closeLiveSession();
             sendJson(response, { ok: true });
             return;
         }

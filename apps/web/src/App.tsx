@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState, useCallback } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 
 declare global {
     interface Window {
@@ -42,12 +42,7 @@ type AudioChunk = { data: string; mimeType: string };
 const API = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787';
 const FLUSH_SAMPLES = 4096;
 
-const DEMO_SCRIPT = [
-    { prompt: "Morning TillTech. Give me a quick operational rundown — who's clocked in, any delivery issues, and how's inventory looking?", delay: 2800 },
-    { prompt: "That dough level is concerning. Halt garlic bread prep to save the dough for pizzas and push a loaded fries promo to make up margin.", delay: 3200 },
-    { prompt: "Good call. Send that promo as a push notification to our app users now.", delay: 2500 },
-    { prompt: "One last thing — Sarah was late again. Note that down and optimise the remaining delivery routes around the traffic.", delay: 3000 }
-];
+
 
 const ICONS: Record<string, string> = { drivers: '🚗', inventory: '📦', kitchen: '🍳', marketing: '📣', staff: '👥', logistics: '🗺️' };
 
@@ -124,8 +119,6 @@ export function App() {
     const [listening, setListening] = useState(false);
     const [interim, setInterim] = useState('');
     const [speaking, setSpeaking] = useState(false);
-    const [demoRunning, setDemoRunning] = useState(false);
-    const [demoStep, setDemoStep] = useState(-1);
     const [flashPanels, setFlashPanels] = useState<Set<string>>(new Set());
 
     // Live state
@@ -133,6 +126,7 @@ export function App() {
     const [liveIn, setLiveIn] = useState('');
     const [liveOut, setLiveOut] = useState('');
     const [liveMuted, setLiveMuted] = useState(false);
+    const [liveTx, setLiveTx] = useState<{id: string; role: 'operator' | 'tilly'; text: string}[]>([]);
 
     // Refs
     const recRef = useRef<SpeechRecognitionLike | null>(null);
@@ -146,9 +140,9 @@ export function App() {
     const bufCountRef = useRef(0);
     const flushingRef = useRef(false);
     const qRef = useRef<AudioChunk[]>([]);
-    const curAudioRef = useRef<HTMLAudioElement | null>(null);
+    const playCtxRef = useRef<AudioContext | null>(null);
+    const playNextTimeRef = useRef(0);
     const playingRef = useRef(false);
-    const demoCancelRef = useRef(false);
     const railScrollRef = useRef<HTMLDivElement | null>(null);
     const prevSnapRef = useRef<Snapshot>(fallbackSnap);
 
@@ -160,7 +154,7 @@ export function App() {
         ]).then(([c, s]) => {
             const config = c as ConfigResponse;
             setCfg(config);
-            setMode(config.defaultMode === 'live' ? 'live' : config.defaultMode === 'gemini' ? 'auto' : 'mock');
+            setMode('live');
             setSnap(s as Snapshot);
             setStatus('ok');
         }).catch(() => { setStatus('off'); setErr('Backend offline. Start the server and refresh.'); });
@@ -193,13 +187,16 @@ export function App() {
         es.onmessage = (ev) => {
             const p = JSON.parse(ev.data) as LiveStreamEvent;
             if (p.type === 'live_status') { setLiveState(p.status); if (p.status === 'speaking') setSpeaking(true); if (['waiting', 'connected', 'disconnected'].includes(p.status)) setSpeaking(false); }
-            else if (p.type === 'input_transcript') { setLiveIn(p.text); p.final ? setInterim('') : setInterim(p.text); }
-            else if (p.type === 'output_transcript') setLiveOut(p.text);
+            else if (p.type === 'input_transcript') { if (p.final) { setLiveIn(p.text); setInterim(''); setLiveTx(prev => [...prev, { id: `i${Date.now()}`, role: 'operator', text: p.text }]); } else { setInterim(p.text); } }
+            else if (p.type === 'output_transcript') { setLiveOut(p.text); if (p.final) { setLiveTx(prev => [...prev, { id: `o${Date.now()}`, role: 'tilly', text: p.text }]); } }
             else if (p.type === 'output_text') setLiveOut(cur => p.text.length > cur.length ? p.text : cur);
-            else if (p.type === 'model_audio') { qRef.current.push({ data: p.data, mimeType: p.mimeType }); void playQ(); }
-            else if (p.type === 'turn_complete') { if (p.inputText) setPrompt(p.inputText); setStatus('busy'); }
+            else if (p.type === 'model_audio') { qRef.current.push({ data: p.data, mimeType: p.mimeType }); playQ(); }
+            else if (p.type === 'turn_complete') {
+                if (p.inputText) setLiveTx(prev => [...prev, { id: `i${Date.now()}`, role: 'operator', text: p.inputText }]);
+                if (p.outputText) setLiveTx(prev => [...prev, { id: `o${Date.now()}`, role: 'tilly', text: p.outputText }]);
+            }
             else if (p.type === 'live_error') { setErr(p.message); setLiveState('disconnected'); }
-            else if (p.type === 'snapshot') { setSnap(p.snapshot); setStatus('ok'); setLiveIn(''); setInterim(''); }
+            else if (p.type === 'snapshot') { setSnap(p.snapshot); setStatus('ok'); }
         };
         es.onerror = () => setLiveState('disconnected');
         esRef.current = es;
@@ -207,31 +204,51 @@ export function App() {
     function closeES() { esRef.current?.close(); esRef.current = null; }
 
     // ── Audio Playback (raw PCM from Gemini Live) ──
-    async function playQ() {
-        if (liveMuted || playingRef.current) return;
-        const c = qRef.current.shift(); if (!c) { setSpeaking(false); return; }
+    function getPlayCtx(sampleRate: number) {
+        if (!playCtxRef.current || playCtxRef.current.state === 'closed') {
+            playCtxRef.current = new (window.AudioContext ?? window.webkitAudioContext!)({ sampleRate });
+            playNextTimeRef.current = 0;
+        }
+        return playCtxRef.current;
+    }
+
+    function drainAudioQ() {
+        qRef.current = [];
+        playingRef.current = false;
+        playNextTimeRef.current = 0;
+        if (playCtxRef.current && playCtxRef.current.state !== 'closed') {
+            playCtxRef.current.close().catch(() => {});
+            playCtxRef.current = null;
+        }
+        setSpeaking(false);
+    }
+
+    function playQ() {
+        if (liveMuted) return;
+        const c = qRef.current.shift();
+        if (!c) { playingRef.current = false; setSpeaking(false); return; }
         playingRef.current = true; setSpeaking(true);
         try {
-            // Decode base64 PCM to Int16 samples
             const bin = atob(c.data);
             const bytes = new Uint8Array(bin.length);
             for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
             const int16 = new Int16Array(bytes.buffer);
-            // Convert to Float32
             const float32 = new Float32Array(int16.length);
             for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
-            // Determine output sample rate from mimeType (e.g. audio/pcm;rate=24000)
             const rateMatch = c.mimeType.match(/rate=(\d+)/);
             const outSr = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
-            // Create AudioContext and play
-            const playCtx = new (window.AudioContext ?? window.webkitAudioContext!)({ sampleRate: outSr });
-            const abuf = playCtx.createBuffer(1, float32.length, outSr);
+            const ctx = getPlayCtx(outSr);
+            const abuf = ctx.createBuffer(1, float32.length, outSr);
             abuf.getChannelData(0).set(float32);
-            const src = playCtx.createBufferSource();
+            const src = ctx.createBufferSource();
             src.buffer = abuf;
-            src.connect(playCtx.destination);
-            src.onended = () => { playCtx.close().catch(() => {}); playingRef.current = false; void playQ(); };
-            src.start();
+            src.connect(ctx.destination);
+            // Schedule seamlessly after last chunk
+            const now = ctx.currentTime;
+            const startAt = Math.max(now, playNextTimeRef.current);
+            playNextTimeRef.current = startAt + abuf.duration;
+            src.onended = () => { void playQ(); };
+            src.start(startAt);
             setLiveState('speaking');
         } catch (e) {
             console.error('Audio playback failed:', e);
@@ -273,7 +290,14 @@ export function App() {
         } catch (e) { setListening(false); setLiveState('disconnected'); setErr(e instanceof Error ? e.message : 'Mic failed.'); await teardown(false); }
     }
 
-    async function stopLive() { setListening(false); await flushBuf(); await teardown(true); }
+    async function stopLive() {
+        setListening(false);
+        await teardown(false);
+        drainAudioQ();
+        setLiveState('idle');
+        setLiveIn(''); setLiveOut(''); setInterim('');
+        await fetch(`${API}/api/live/session/close`, { method: 'POST' }).catch(() => {});
+    }
 
     // ── Submit ──
     const sendPromptDirect = async (text: string, modeOverride?: string) => {
@@ -295,50 +319,22 @@ export function App() {
 
     function handleSubmit(ev: FormEvent) { ev.preventDefault(); void sendPromptRef.current(prompt); setPrompt(''); }
 
-    // Reset state without touching demo flags
-    async function _resetState() {
+    // Reset
+    async function resetScenario() {
         await teardown(false); recRef.current?.stop(); setListening(false);
-        setLiveIn(''); setLiveOut(''); qRef.current = []; curAudioRef.current?.pause(); curAudioRef.current = null; playingRef.current = false;
+        setLiveIn(''); setLiveOut(''); drainAudioQ(); setLiveTx([]);
+        await fetch(`${API}/api/live/session/close`, { method: 'POST' }).catch(() => {});
         const res = await fetch(`${API}/api/scenario/reset`, { method: 'POST' });
         const snapData = await res.json() as Snapshot;
         setSnap(snapData);
-        setStatus('ok'); setErr(''); setLiveState('idle');
-    }
-
-    async function resetScenario() {
-        demoCancelRef.current = true; setDemoRunning(false); setDemoStep(-1);
-        await _resetState();
-    }
-
-    // ── Auto Demo ──
-    async function runDemo() {
-        demoCancelRef.current = false;
-        // Reset state first WITHOUT killing demo flags
-        await _resetState();
-        setDemoRunning(true); setDemoStep(0);
-        await sleep(600);
-
-        for (let i = 0; i < DEMO_SCRIPT.length; i++) {
-            if (demoCancelRef.current) break;
-            setDemoStep(i);
-            setPrompt(DEMO_SCRIPT[i].prompt);
-            await sleep(1500); // Show the prompt visually
-            if (demoCancelRef.current) break;
-            setPrompt('');
-            await sendPromptRef.current(DEMO_SCRIPT[i].prompt, 'mock');
-            if (demoCancelRef.current) break;
-            await sleep(DEMO_SCRIPT[i].delay);
-        }
-        setDemoRunning(false); setDemoStep(-1);
+        setStatus('ok'); setErr(''); setLiveState('idle'); setInterim('');
     }
 
     // ── Voice ──
     function toggleSpeech() {
-        if (mode === 'live' && cfg.liveSessionReady) { setLiveMuted(c => !c); return; }
-        if (speaking) { window.speechSynthesis.cancel(); setSpeaking(false); return; }
-        const u = new SpeechSynthesisUtterance(snap.speaking);
-        u.onend = () => setSpeaking(false); u.onerror = () => setSpeaking(false);
-        setSpeaking(true); window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+        if (speaking) { drainAudioQ(); return; }
+        if (liveMuted) { setLiveMuted(false); return; }
+        setLiveMuted(true); drainAudioQ();
     }
 
     function toggleBrowserMic() {
@@ -358,16 +354,17 @@ export function App() {
     }
 
     function toggleVoice() {
-        if (mode === 'live' && cfg.liveSessionReady) { if (listening || liveState === 'capturing' || liveState === 'connecting') { void stopLive(); return; } void startLive(); return; }
-        toggleBrowserMic();
+        if (listening || liveState === 'capturing' || liveState === 'connecting') {
+            drainAudioQ();
+            void stopLive();
+            return;
+        }
+        void startLive();
     }
 
-    // ── Derived ──
-    const orbState = listening || liveState === 'capturing' ? 'listening' : status === 'busy' || liveState === 'processing' ? 'processing' : speaking || liveState === 'speaking' ? 'speaking' : 'idle';
+    const orbState = listening || liveState === 'capturing' ? 'listening' : liveState === 'processing' ? 'processing' : speaking || liveState === 'speaking' ? 'speaking' : 'idle';
     const orbTag = orbState === 'listening' ? '● Listening' : orbState === 'processing' ? '◌ Thinking' : orbState === 'speaking' ? '◉ Speaking' : '○ Click to talk';
-    const dotClass = status === 'off' ? 'offline' : status === 'busy' || liveState === 'capturing' || liveState === 'speaking' ? 'running' : '';
-    const modes = (['live', 'auto', 'mock'] as const).filter(m => { if (m === 'live') return Boolean(cfg.liveSessionReady); return true; });
-    const displayText = liveOut || snap.speaking;
+    const dotClass = status === 'off' ? 'offline' : listening || liveState === 'capturing' || liveState === 'speaking' ? 'running' : '';
 
     return (
         <main className="shell">
@@ -376,15 +373,9 @@ export function App() {
                 <div className="topBarLeft">
                     <div className="topBarLogo">Tilly <span>Live Ops</span></div>
                     <span className={`statusDot ${dotClass}`} />
-                    <span className="statusLabel">{demoRunning ? `Demo step ${demoStep + 1}/${DEMO_SCRIPT.length}` : snap.meta.engine}</span>
+                    <span className="statusLabel">{liveState !== 'idle' ? liveState : 'live'}</span>
                 </div>
                 <div className="topBarRight">
-                    <button className={`demoBtn ${demoRunning ? 'running' : ''}`} onClick={demoRunning ? () => { demoCancelRef.current = true; } : () => void runDemo()} disabled={status === 'off'}>
-                        {demoRunning ? '■ Stop' : '▶ Run Demo'}
-                    </button>
-                    <div className="modeSwitch">
-                        {modes.map(m => <button key={m} className={`modeBtn ${m === mode ? 'active' : ''}`} onClick={() => setMode(m)}>{m}</button>)}
-                    </div>
                     <button className="resetBtn" onClick={() => void resetScenario()}>Reset</button>
                 </div>
             </header>
@@ -405,17 +396,8 @@ export function App() {
                     ))}
                 </div>
 
-                {/* Centre — Orb */}
+                {/* Centre — Orb only */}
                 <div className="centre">
-                    <div className="chips">
-                        {snap.heroStats.map(s => (
-                            <div key={s.id} className="statChip">
-                                <span className="statChipL">{s.label}</span>
-                                <span className="statChipV">{s.value}</span>
-                            </div>
-                        ))}
-                    </div>
-
                     <div className="orbWrap" onClick={toggleVoice}>
                         <div className="halo" />
                         <div className="ring ring1" />
@@ -424,29 +406,9 @@ export function App() {
                         <div className={`orb ${orbState}`} />
                     </div>
                     <div className={`orbTag ${orbState !== 'idle' ? 'on' : ''}`}>{orbTag}</div>
-
-                    <div className="liveText">
-                        {(liveIn || interim) && (
-                            <div className="bubble op">
-                                <div className="bubbleRole">Operator</div>
-                                <div className="bubbleText">{liveIn || interim}</div>
-                            </div>
-                        )}
-                        {demoRunning && demoStep >= 0 && prompt && (
-                            <div className="bubble op">
-                                <div className="bubbleRole">Operator</div>
-                                <div className="bubbleText">{prompt}</div>
-                            </div>
-                        )}
-                        <div className="bubble tilly">
-                            <div className="bubbleRole">Tilly</div>
-                            <div className="bubbleText">{displayText}</div>
-                        </div>
-                        {snap.summary !== snap.speaking && <div className="summaryLine">{snap.summary}</div>}
-                    </div>
                 </div>
 
-                {/* Right — Actions + Transcript */}
+                {/* Right — Actions */}
                 <aside className="rail">
                     <div className="railTitle">Action Timeline</div>
                     <div className="railScroll" ref={railScrollRef}>
@@ -461,27 +423,12 @@ export function App() {
                             </div>
                         ))}
                     </div>
-                    <div className="railSection">Conversation</div>
-                    <div className="railScroll">
-                        {snap.transcript.slice().reverse().map(t => (
-                            <div key={t.id} className={`tEntry r-${t.role}`}>
-                                <span className="tRole">{t.role}</span>
-                                <div className="tText">{t.text}</div>
-                            </div>
-                        ))}
-                    </div>
                 </aside>
             </section>
 
-            {/* ── Composer ── */}
             <form className="composer" onSubmit={handleSubmit}>
-                <button type="button" className={`iconBtn ${listening ? 'on' : ''}`} onClick={toggleVoice} title="Mic">🎤</button>
-                <button type="button" className={`iconBtn ${speaking ? 'speaking' : ''}`} onClick={toggleSpeech} title="Audio">{speaking ? '🔊' : '🔈'}</button>
-                <input className="cInput" type="text" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Ask Tilly to review, decide, and act…" disabled={demoRunning} />
-                <div className="chipRow">
-                    {cfg.suggestions.map(s => <button key={s} type="button" className="chip" onClick={() => setPrompt(s)}>{s}</button>)}
-                </div>
-                <button type="submit" className="sendBtn" disabled={status === 'busy' || !prompt.trim() || demoRunning}>
+                <input className="cInput" type="text" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Type a message to Tilly…" />
+                <button type="submit" className="sendBtn" disabled={status === 'busy' || !prompt.trim()}>
                     {status === 'busy' ? '⏳' : 'Send'}
                 </button>
                 {err && <span className="errMsg">{err}</span>}
