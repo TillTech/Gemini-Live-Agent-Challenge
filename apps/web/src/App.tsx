@@ -151,7 +151,7 @@ export function App() {
     useEffect(() => {
         Promise.all([
             fetch(`${API}/api/config`).then(r => r.json()),
-            fetch(`${API}/api/state`).then(r => r.json())
+            fetch(`${API}/api/scenario/reset`, { method: 'POST' }).then(r => r.json())
         ]).then(([c, s]) => {
             const config = c as ConfigResponse;
             setCfg(config);
@@ -233,12 +233,12 @@ export function App() {
         const c = qRef.current.shift();
         if (!c) {
             playingRef.current = false;
-            // Debounce: only mark as not speaking if no new audio arrives within 600ms
+            // Debounce: only mark as not speaking if no new audio arrives within 3s
             if (!speakEndTimer.current) {
                 speakEndTimer.current = setTimeout(() => {
                     speakEndTimer.current = null;
                     if (!playingRef.current) setSpeaking(false);
-                }, 600);
+                }, 3000);
             }
             return;
         }

@@ -251,6 +251,11 @@ function handleAudioMessage(event: AudioServerMessage) {
         return;
     }
 
+    const contentKeys = Object.keys(content as Record<string, unknown>);
+    if (!contentKeys.includes('modelTurn')) {
+        console.log('[LIVE] serverContent keys:', contentKeys.join(', '));
+    }
+
     if (content.waitingForInput) {
         emitLiveEvent({ type: 'live_status', status: 'waiting' });
     }
@@ -260,7 +265,7 @@ function handleAudioMessage(event: AudioServerMessage) {
     }
 
     if (content.inputTranscription?.text) {
-        latestInputTranscript = content.inputTranscription.text;
+        latestInputTranscript += content.inputTranscription.text;
         emitLiveEvent({
             type: 'input_transcript',
             text: latestInputTranscript,
@@ -269,7 +274,7 @@ function handleAudioMessage(event: AudioServerMessage) {
     }
 
     if (content.outputTranscription?.text) {
-        latestOutputTranscript = content.outputTranscription.text;
+        latestOutputTranscript += content.outputTranscription.text;
         emitLiveEvent({
             type: 'output_transcript',
             text: latestOutputTranscript,
@@ -294,22 +299,31 @@ function handleAudioMessage(event: AudioServerMessage) {
         }
     }
 
-    if (content.turnComplete) {
+    if (content.turnComplete || (content as Record<string, unknown>).generationComplete) {
+        const inputText = latestInputTranscript.trim();
+        const outputText = latestOutputTranscript.trim();
+        console.log('[LIVE] Turn complete — input:', JSON.stringify(inputText), '| output length:', outputText.length);
         emitLiveEvent({
             type: 'turn_complete',
-            inputText: latestInputTranscript.trim(),
-            outputText: latestOutputTranscript.trim()
+            inputText,
+            outputText
         });
         emitLiveEvent({ type: 'live_status', status: 'waiting' });
         resetAudioTurnState();
     }
 }
 
+let lastCloseTime = 0;
+
 export async function startLiveAudioSession() {
     if (audioSession) {
-        console.log('[LIVE] Audio session already active, reusing.');
-        emitLiveEvent({ type: 'live_status', status: 'connected' });
         return audioSession;
+    }
+
+    // Cooldown: don't reconnect within 5 seconds of last close
+    const timeSinceClose = Date.now() - lastCloseTime;
+    if (lastCloseTime > 0 && timeSinceClose < 5000) {
+        return null;
     }
 
     if (!isLiveConfigured()) {
@@ -371,6 +385,7 @@ export async function startLiveAudioSession() {
             onclose: () => {
                 console.log('[LIVE] Audio session CLOSED');
                 audioSession = null;
+                lastCloseTime = Date.now();
                 resetAudioTurnState();
                 emitLiveEvent({ type: 'live_status', status: 'disconnected' });
             },

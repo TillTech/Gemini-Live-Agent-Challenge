@@ -217,7 +217,7 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     const text = prompt.toLowerCase();
     const actions: PlannedAction[] = [];
 
-    if (includesAny(text, ['rundown', 'overview', 'how are', 'status update', 'brief'])) {
+    if (includesAny(text, ['rundown', 'overview', 'status update', 'brief', 'everything going'])) {
         actions.push({ tool: 'check_driver_status' }, { tool: 'check_inventory_status' });
     }
     if (includesAny(text, ['driver', 'clocked', 'shift', 'delivery']) && !actions.some(a => a.tool === 'check_driver_status')) {
@@ -232,7 +232,7 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     if (includesAny(text, ['inventory', 'stock', 'dough', 'beans', 'receipt paper', 'kiosk'])) {
         actions.push({ tool: 'check_inventory_status' });
     }
-    if (includesAny(text, ['halt', 'garlic bread', 'save the dough', '86'])) {
+    if (includesAny(text, ['kitchen', 'prep', 'blocked', 'menu item', 'halt', 'garlic bread', 'save the dough', '86'])) {
         actions.push({ tool: 'halt_kitchen_item', args: { item: 'garlic bread' } });
     }
     if (includesAny(text, ['promo', 'promotion', 'campaign', 'loaded fries', 'iced latte'])) {
@@ -241,7 +241,7 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     if (includesAny(text, ['push', 'notification', 'qr code', 'app users', 'send it'])) {
         actions.push({ tool: 'send_marketing_push' });
     }
-    if (includesAny(text, ['show up on time', 'late', 'note that down'])) {
+    if (includesAny(text, ['staff', 'attendance', 'late', 'absent', 'who was late', 'show up on time', 'note that down', 'sarah'])) {
         actions.push({ tool: 'record_attendance_note' });
     }
     if (includesAny(text, ['reorder', 'supplier', 'beans ordered'])) {
@@ -251,9 +251,8 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
         actions.push({ tool: 'optimise_driver_routes' });
     }
 
-    if (actions.length === 0) {
-        actions.push({ tool: 'check_driver_status' }, { tool: 'check_inventory_status' });
-    }
+    // No fallback — if no keywords matched, return empty actions
+    // This prevents casual chat ('hiya', 'thanks') from triggering panel updates
 
     const priorContext = current.meta.lastPrompt ? 'Context from the previous operator turn has been preserved.' : 'This is the opening turn of the session.';
 
