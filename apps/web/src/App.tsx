@@ -462,14 +462,18 @@ export function App() {
 
                 {/* Centre — Orb + Action Stage */}
                 <div className={`centre ${isLive ? 'active' : ''}`}>
-                    <div className="orbWrap" onClick={toggleVoice}>
-                        <div className="halo" />
-                        <div className="ring ring1" />
-                        <div className="ring ring2" />
-                        <div className="ring ring3" />
-                        <div className={`orb ${orbState}`} />
+                    <div className="orbSpacer" />
+                    <div className="orbArea">
+                        <div className="orbWrap" onClick={toggleVoice}>
+                            <div className="halo" />
+                            <div className="ring ring1" />
+                            <div className="ring ring2" />
+                            <div className="ring ring3" />
+                            <div className={`orb ${orbState}`} />
+                        </div>
+                        <div className={`orbTag ${orbState !== 'idle' ? 'on' : ''}`}>{orbTag}</div>
                     </div>
-                    <div className={`orbTag ${orbState !== 'idle' ? 'on' : ''}`}>{orbTag}</div>
+                    <div className="orbSpacer" />
 
                     {/* Action Visualization Stage */}
                     {isLive && activeViz.length > 0 && (
