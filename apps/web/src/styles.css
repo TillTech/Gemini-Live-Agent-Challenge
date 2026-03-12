@@ -1,0 +1,537 @@
+:root {
+  color-scheme: dark;
+  --bg: #071019;
+  --bg-elevated: rgba(8, 24, 39, 0.78);
+  --bg-panel: rgba(9, 20, 34, 0.9);
+  --line: rgba(120, 201, 255, 0.16);
+  --line-strong: rgba(120, 201, 255, 0.34);
+  --text: #eef7ff;
+  --muted: #8ba8c2;
+  --accent: #8fdcff;
+  --accent-strong: #4fd3ff;
+  --good: #84f4b2;
+  --warn: #ffd36a;
+  --critical: #ff8b7c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(80, 136, 255, 0.16), transparent 24%),
+    radial-gradient(circle at 88% 14%, rgba(79, 211, 255, 0.16), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(68, 167, 255, 0.12), transparent 26%),
+    linear-gradient(180deg, #05101a 0%, #08111d 100%);
+  color: var(--text);
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+button {
+  border: 1px solid rgba(101, 212, 255, 0.26);
+  background: linear-gradient(180deg, rgba(11, 58, 94, 0.96), rgba(8, 34, 56, 0.96));
+  color: var(--text);
+  padding: 0.85rem 1.1rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--line-strong);
+}
+
+textarea,
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  width: min(1380px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 32px 0 56px;
+}
+
+.hero,
+.commandDeck,
+.stage,
+.panelCard,
+.actionsCard,
+.summaryCard,
+.composerCard,
+.transcriptCard {
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 30px;
+  border-radius: 30px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: auto -10% -35% 40%;
+  height: 220px;
+  background: radial-gradient(circle, rgba(79, 211, 255, 0.18), transparent 60%);
+  pointer-events: none;
+}
+
+.eyebrow,
+.cardLabel {
+  margin: 0 0 10px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.8rem;
+}
+
+.hero h1,
+.summaryCard h2,
+.panelCard h3 {
+  margin: 0;
+}
+
+.hero h1 {
+  font-size: clamp(2.4rem, 5vw, 4.8rem);
+  letter-spacing: -0.04em;
+}
+
+.lede {
+  color: var(--muted);
+  max-width: 720px;
+  font-size: 1.05rem;
+}
+
+.heroCopy {
+  display: grid;
+  gap: 18px;
+}
+
+.statRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.heroStat {
+  min-width: 160px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(8, 19, 32, 0.68);
+}
+
+.heroStat span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.heroStat strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1.2rem;
+}
+
+.voiceBar {
+  display: grid;
+  gap: 12px;
+  align-self: flex-start;
+  padding: 18px 18px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  min-width: 240px;
+  background: rgba(8, 20, 34, 0.8);
+}
+
+.voiceStatusRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.voiceControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.signalBars {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: end;
+  gap: 6px;
+  min-height: 42px;
+}
+
+.signalBars span {
+  display: block;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(79, 211, 255, 0.9), rgba(79, 211, 255, 0.2));
+  transform-origin: center bottom;
+  opacity: 0.35;
+}
+
+.signalBars-capturing span,
+.signalBars-speaking span,
+.signalBars-processing span {
+  animation: signalPulse 0.9s ease-in-out infinite alternate;
+  opacity: 1;
+}
+
+.signalBars-capturing span:nth-child(2),
+.signalBars-speaking span:nth-child(2),
+.signalBars-processing span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.signalBars-capturing span:nth-child(3),
+.signalBars-speaking span:nth-child(3),
+.signalBars-processing span:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.signalBars-capturing span:nth-child(4),
+.signalBars-speaking span:nth-child(4),
+.signalBars-processing span:nth-child(4) {
+  animation-delay: 0.36s;
+}
+
+.signalBars-capturing span:nth-child(5),
+.signalBars-speaking span:nth-child(5),
+.signalBars-processing span:nth-child(5) {
+  animation-delay: 0.48s;
+}
+
+.voiceTranscriptCard {
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(7, 18, 30, 0.88);
+}
+
+.voiceTranscriptCard p {
+  margin: 0;
+}
+
+.voiceTranscriptLabel {
+  margin-bottom: 8px !important;
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.voiceTranscriptCardOutput {
+  border-color: rgba(132, 244, 178, 0.24);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.dot-ready {
+  background: var(--good);
+}
+
+.dot-running {
+  background: var(--accent);
+}
+
+.dot-offline {
+  background: var(--warn);
+}
+
+.chip,
+.metricChip,
+.suggestionChip,
+.modeButton {
+  border-radius: 999px;
+}
+
+.chip,
+.metricChip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line);
+  color: var(--accent);
+  background: rgba(9, 27, 44, 0.7);
+  font-size: 0.82rem;
+}
+
+.commandDeck {
+  margin-top: 22px;
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 20px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: 0.95fr 1.05fr;
+  gap: 20px;
+  margin-top: 22px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.summaryCard,
+.actionsCard,
+.composerCard,
+.transcriptCard {
+  padding: 24px;
+  border-radius: 24px;
+}
+
+.summaryCardLarge {
+  min-height: 280px;
+  display: grid;
+  align-content: space-between;
+  background:
+    linear-gradient(180deg, rgba(10, 25, 41, 0.95), rgba(7, 18, 30, 0.92)),
+    radial-gradient(circle at top right, rgba(79, 211, 255, 0.12), transparent 26%);
+}
+
+.summaryCard p:last-child {
+  color: var(--muted);
+}
+
+.metaRow {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.composerHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.modeSwitch {
+  display: flex;
+  gap: 8px;
+}
+
+.modeButton {
+  padding: 0.55rem 0.85rem;
+  background: rgba(9, 23, 39, 0.8);
+}
+
+.modeButton.active {
+  border-color: var(--line-strong);
+  color: var(--accent);
+}
+
+.activeState {
+  border-color: var(--line-strong);
+  color: var(--accent);
+}
+
+.composerCard {
+  display: grid;
+  gap: 16px;
+}
+
+.composerCard textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(5, 15, 26, 0.9);
+  color: var(--text);
+  padding: 16px;
+  min-height: 156px;
+}
+
+.suggestionList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.interimText {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.92rem;
+}
+
+.suggestionChip {
+  padding: 0.55rem 0.85rem;
+  text-align: left;
+  background: rgba(7, 21, 36, 0.84);
+}
+
+.composerActions {
+  display: flex;
+  gap: 12px;
+}
+
+.secondaryButton {
+  background: rgba(8, 19, 32, 0.7);
+}
+
+.errorText {
+  margin: 0;
+  color: var(--critical);
+}
+
+.transcriptCard ul,
+.actionsCard ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.transcriptCard {
+  background: linear-gradient(180deg, rgba(7, 16, 27, 0.92), rgba(6, 14, 23, 0.92));
+}
+
+.transcriptEntry {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(8, 20, 32, 0.86);
+}
+
+.transcriptEntry p {
+  margin: 8px 0 0;
+  color: var(--text);
+}
+
+.transcriptRole {
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.role-operator {
+  border-color: rgba(143, 220, 255, 0.28);
+}
+
+.role-tilly {
+  border-color: rgba(132, 244, 178, 0.28);
+}
+
+.actionsCard li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  align-items: start;
+}
+
+.actionsCard li p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.actionsCard li.done strong {
+  color: var(--good);
+}
+
+.actionsCard li.pending strong {
+  color: var(--warn);
+}
+
+.panelGrid {
+  margin-top: 22px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.panelCard {
+  padding: 20px;
+  border-radius: 22px;
+  background: var(--bg-panel);
+}
+
+.panelCard p:last-child {
+  color: var(--muted);
+}
+
+.panelValueRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.tone-stable {
+  box-shadow: inset 0 0 0 1px rgba(132, 244, 178, 0.08);
+}
+
+.tone-warn {
+  box-shadow: inset 0 0 0 1px rgba(255, 211, 106, 0.14);
+}
+
+.tone-critical {
+  box-shadow: inset 0 0 0 1px rgba(255, 139, 124, 0.16);
+}
+
+.tone-boost {
+  box-shadow: inset 0 0 0 1px rgba(79, 211, 255, 0.14);
+}
+
+@keyframes signalPulse {
+  from {
+    transform: scaleY(0.4);
+  }
+
+  to {
+    transform: scaleY(2.4);
+  }
+}
+
+@media (max-width: 960px) {
+  .hero,
+  .commandDeck,
+  .stage,
+  .panelGrid {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .hero {
+    align-items: start;
+  }
+
+  .composerHeader,
+  .panelValueRow,
+  .composerActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

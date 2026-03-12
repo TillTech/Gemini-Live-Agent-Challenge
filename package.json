@@ -1,0 +1,12 @@
+{
+  "name": "tilly-live-ops",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Public starter for a Gemini Live hospitality operations agent.",
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "check": "pnpm -r check"
+  }
+}
