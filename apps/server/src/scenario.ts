@@ -19,34 +19,31 @@ function panel(id: string, label: string, value: string, detail: string, tone: P
 
 export function createInitialSnapshot(liveReady: boolean): Snapshot {
     return {
-        summary: 'Tilly is standing by for a live operational brief.',
-        speaking: 'Ask for a shift rundown, inventory risk, route optimisation, or a quick recovery campaign.',
+        summary: 'Tilly is standing by.',
+        speaking: '',
         actions: [
             {
                 id: 'boot-1',
-                title: 'Voice agent primed for first operator instruction',
+                title: 'Ready for first instruction',
                 status: 'pending',
                 domain: 'control',
-                detail: 'Use mock mode until Gemini credentials are configured.'
+                detail: 'Click the orb and start talking to Tilly.'
             }
         ],
         panels: [
-            panel('drivers', 'Drivers', '4 active', 'All evening drivers visible, no reroute action taken yet.', 'stable', 'ETA board online'),
-            panel('inventory', 'Inventory', 'Stable', 'Fresh dough threshold monitoring active for the main prep kitchen.', 'stable', '2 live thresholds'),
-            panel('kitchen', 'Kitchen', 'Nominal', 'No menu items blocked and no emergency prep restrictions applied.', 'stable', '0 blocked items'),
-            panel('marketing', 'Marketing', 'Idle', 'No targeted promo drafted or queued for app users.', 'boost', 'Reach ready'),
-            panel('staff', 'Staffing', 'On track', 'Attendance view is clear and no unresolved lateness notes are open.', 'stable', '1 late arrival flag'),
-            panel('logistics', 'Logistics', 'Normal flow', 'Routes are running on default planning with no active traffic override.', 'stable', '45 min avg window')
+            panel('drivers', 'Drivers', '—', 'Awaiting data', 'stable', '—'),
+            panel('inventory', 'Inventory', '—', 'Awaiting data', 'stable', '—'),
+            panel('kitchen', 'Kitchen', '—', 'Awaiting data', 'stable', '—'),
+            panel('marketing', 'Marketing', '—', 'Awaiting data', 'stable', '—'),
+            panel('staff', 'Staffing', '—', 'Awaiting data', 'stable', '—'),
+            panel('logistics', 'Logistics', '—', 'Awaiting data', 'stable', '—')
         ],
         heroStats: [
-            { id: 'coverage', label: 'Operational Domains', value: '6 live' },
-            { id: 'risk', label: 'Critical Risks', value: '1 watch' },
-            { id: 'engine', label: 'Agent Engine', value: liveReady ? 'Gemini ready' : 'Mock fallback' }
+            { id: 'coverage', label: 'Operational Domains', value: '6 available' },
+            { id: 'risk', label: 'Critical Risks', value: '—' },
+            { id: 'engine', label: 'Agent Engine', value: liveReady ? 'Gemini Live' : 'Offline' }
         ],
-        transcript: [
-            makeEntry('system', 'Session created. Synthetic hospitality state loaded.'),
-            makeEntry('tilly', 'Good morning. I am ready to walk the shift and take action across operations.')
-        ],
+        transcript: [],
         meta: {
             engine: 'mock',
             liveReady,
@@ -220,7 +217,10 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     const text = prompt.toLowerCase();
     const actions: PlannedAction[] = [];
 
-    if (includesAny(text, ['driver', 'clocked', 'shift', 'delivery'])) {
+    if (includesAny(text, ['rundown', 'overview', 'how are', 'status update', 'brief'])) {
+        actions.push({ tool: 'check_driver_status' }, { tool: 'check_inventory_status' });
+    }
+    if (includesAny(text, ['driver', 'clocked', 'shift', 'delivery']) && !actions.some(a => a.tool === 'check_driver_status')) {
         actions.push({ tool: 'check_driver_status' });
     }
     if (includesAny(text, ['apolog', 'sms'])) {

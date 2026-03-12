@@ -32,9 +32,15 @@ subscribeLiveEvents((event) => {
     broadcastLiveEvent(event);
 
     if (event.type === 'function_call') {
-        // Execute the tool and update state
         const action = { tool: event.name, args: event.args };
         applyAction(state, action);
+        broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+    }
+
+    // When a live voice turn completes, use the transcript to determine and execute actions
+    if (event.type === 'turn_complete' && event.inputText) {
+        const plan = createMockPlan(event.inputText, state);
+        state = applyPlan(state, event.inputText, plan, 'live');
         broadcastLiveEvent({ type: 'snapshot', snapshot: state });
     }
 });

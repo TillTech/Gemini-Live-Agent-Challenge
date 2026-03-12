@@ -143,6 +143,7 @@ export function App() {
     const playCtxRef = useRef<AudioContext | null>(null);
     const playNextTimeRef = useRef(0);
     const playingRef = useRef(false);
+    const speakEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const railScrollRef = useRef<HTMLDivElement | null>(null);
     const prevSnapRef = useRef<Snapshot>(fallbackSnap);
 
@@ -186,7 +187,11 @@ export function App() {
         const es = new EventSource(`${API}/api/live/events`);
         es.onmessage = (ev) => {
             const p = JSON.parse(ev.data) as LiveStreamEvent;
-            if (p.type === 'live_status') { setLiveState(p.status); if (p.status === 'speaking') setSpeaking(true); if (['waiting', 'connected', 'disconnected'].includes(p.status)) setSpeaking(false); }
+            if (p.type === 'live_status') {
+                setLiveState(p.status);
+                if (p.status === 'speaking') setSpeaking(true);
+                if (p.status === 'disconnected') setSpeaking(false);
+            }
             else if (p.type === 'input_transcript') { if (p.final) { setLiveIn(p.text); setInterim(''); setLiveTx(prev => [...prev, { id: `i${Date.now()}`, role: 'operator', text: p.text }]); } else { setInterim(p.text); } }
             else if (p.type === 'output_transcript') { setLiveOut(p.text); if (p.final) { setLiveTx(prev => [...prev, { id: `o${Date.now()}`, role: 'tilly', text: p.text }]); } }
             else if (p.type === 'output_text') setLiveOut(cur => p.text.length > cur.length ? p.text : cur);
@@ -226,7 +231,19 @@ export function App() {
     function playQ() {
         if (liveMuted) return;
         const c = qRef.current.shift();
-        if (!c) { playingRef.current = false; setSpeaking(false); return; }
+        if (!c) {
+            playingRef.current = false;
+            // Debounce: only mark as not speaking if no new audio arrives within 600ms
+            if (!speakEndTimer.current) {
+                speakEndTimer.current = setTimeout(() => {
+                    speakEndTimer.current = null;
+                    if (!playingRef.current) setSpeaking(false);
+                }, 600);
+            }
+            return;
+        }
+        // Cancel any pending "stop speaking" timer
+        if (speakEndTimer.current) { clearTimeout(speakEndTimer.current); speakEndTimer.current = null; }
         playingRef.current = true; setSpeaking(true);
         try {
             const bin = atob(c.data);
@@ -249,7 +266,6 @@ export function App() {
             playNextTimeRef.current = startAt + abuf.duration;
             src.onended = () => { void playQ(); };
             src.start(startAt);
-            setLiveState('speaking');
         } catch (e) {
             console.error('Audio playback failed:', e);
             playingRef.current = false; setSpeaking(false); void playQ();
@@ -362,9 +378,14 @@ export function App() {
         void startLive();
     }
 
-    const orbState = listening || liveState === 'capturing' ? 'listening' : liveState === 'processing' ? 'processing' : speaking || liveState === 'speaking' ? 'speaking' : 'idle';
-    const orbTag = orbState === 'listening' ? '● Listening' : orbState === 'processing' ? '◌ Thinking' : orbState === 'speaking' ? '◉ Speaking' : '○ Click to talk';
-    const dotClass = status === 'off' ? 'offline' : listening || liveState === 'capturing' || liveState === 'speaking' ? 'running' : '';
+    // Determine the real conversational state
+    const isLive = listening || ['capturing', 'connected', 'waiting', 'speaking', 'interrupted', 'processing'].includes(liveState);
+    // Processing = user has spoken (liveIn is set), Tilly hasn't started her audio response yet
+    const isProcessing = isLive && !speaking && liveIn.length > 0 && liveState === 'waiting';
+    const orbState = speaking ? 'speaking' : isProcessing ? 'processing' : isLive ? 'listening' : 'idle';
+    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'processing' ? '◌ Processing' : orbState === 'listening' ? '● Listening' : '○ Click to talk';
+    const dotClass = status === 'off' ? 'offline' : isLive ? 'running' : '';
+    const statusText = !isLive ? 'Ready' : speaking ? 'Speaking' : isProcessing ? 'Processing' : 'Listening';
 
     return (
         <main className="shell">
@@ -373,7 +394,7 @@ export function App() {
                 <div className="topBarLeft">
                     <div className="topBarLogo">Tilly <span>Live Ops</span></div>
                     <span className={`statusDot ${dotClass}`} />
-                    <span className="statusLabel">{liveState !== 'idle' ? liveState : 'live'}</span>
+                    <span className="statusLabel">{statusText}</span>
                 </div>
                 <div className="topBarRight">
                     <button className="resetBtn" onClick={() => void resetScenario()}>Reset</button>

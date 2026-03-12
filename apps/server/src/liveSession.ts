@@ -45,6 +45,11 @@ type AudioServerMessage = {
             parts?: PartLike[];
         };
     };
+    toolCall?: {
+        functionCalls: Array<{ id: string; name: string; args?: Record<string, unknown> }>;
+    };
+    toolCallCancellation?: { ids: string[] };
+    setupComplete?: Record<string, unknown>;
 };
 
 export type LiveStreamEvent =
@@ -212,8 +217,36 @@ async function ensureTextSession() {
 }
 
 function handleAudioMessage(event: AudioServerMessage) {
-    const content = event.serverContent;
+    // Handle tool calls (top-level, per Gemini Live API spec)
+    if (event.toolCall) {
+        console.log('[LIVE] Tool call received:', JSON.stringify(event.toolCall));
+        const responses: Array<{ id: string; name: string; response: { result: string } }> = [];
 
+        for (const fc of event.toolCall.functionCalls) {
+            console.log('[LIVE] Executing tool:', fc.name, fc.args);
+            emitLiveEvent({
+                type: 'function_call',
+                id: fc.id,
+                name: fc.name,
+                args: fc.args ?? {}
+            });
+            responses.push({ id: fc.id, name: fc.name, response: { result: 'Action completed successfully.' } });
+        }
+
+        // Send tool responses back so the model can continue speaking
+        if (audioSession) {
+            audioSession.sendToolResponse({ functionResponses: responses });
+        }
+        return;
+    }
+
+    // Handle setup complete
+    if (event.setupComplete) {
+        console.log('[LIVE] Setup complete');
+        return;
+    }
+
+    const content = event.serverContent;
     if (!content) {
         return;
     }
@@ -259,28 +292,6 @@ function handleAudioMessage(event: AudioServerMessage) {
             });
             emitLiveEvent({ type: 'live_status', status: 'speaking' });
         }
-
-        if (part.functionCall) {
-            const callId = 'fc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-            console.log('[LIVE] Function call:', part.functionCall.name, part.functionCall.args);
-            emitLiveEvent({
-                type: 'function_call',
-                id: callId,
-                name: part.functionCall.name,
-                args: part.functionCall.args ?? {}
-            });
-
-            // Send tool response back to model so it can continue
-            if (audioSession) {
-                audioSession.sendToolResponse({
-                    functionResponses: [{
-                        id: callId,
-                        name: part.functionCall.name,
-                        response: { result: 'Action completed successfully.' }
-                    }]
-                });
-            }
-        }
     }
 
     if (content.turnComplete) {
@@ -324,13 +335,14 @@ export async function startLiveAudioSession() {
                 }
             },
             systemInstruction: [
-                'You are Tilly, the live operations agent for TillTech, a hospitality technology platform.',
-                'You are speaking directly to a restaurant or hospitality business operator through a voice interface. You are confident, calm, operational, and fast. You are NOT a generic chatbot. You are a business operations agent who can see and control all aspects of their business.',
-                'Your capabilities (use the tools provided): Check driver status and delivery delays. Monitor inventory levels. Halt kitchen items to conserve stock. Send customer apology SMS and add loyalty points. Draft and send marketing promotions. Optimise delivery routes. Record attendance notes.',
-                'When the operator asks you to do something, USE the appropriate tool. Always call tools when the operator requests an action. Do not just describe what you would do, actually do it by calling the tool.',
-                'Current operational state: 4 evening drivers active with 1 delayed by traffic. Fresh dough at 20 portions which is below the Friday-night threshold. Kitchen nominal with no blocked items. Marketing idle with no active campaigns. 1 staff lateness flag. Logistics on default route planning.',
-                'Keep responses short and operational. Confirm actions taken. Reference specific data. Sound like you are running the shift, not explaining it.'
-            ].join(' '),
+                'You are Tilly, the live operations agent for TillTech — a hospitality technology platform that powers restaurants, takeaways, and retail businesses. You have full visibility across drivers, inventory, kitchen, marketing, staffing, and logistics.',
+                'You are speaking to a restaurant operator through a live voice interface. Be confident, calm, concise, and operational. You sound like a competent shift manager, not a chatbot.',
+                'IMPORTANT BEHAVIOUR: When the operator asks you to take an action, gather the necessary details FIRST through natural conversation before calling the tool. For example, if they say "send a push notification", ask WHO it should go to, WHAT the offer is, and WHEN it should go out. If they say "halt a kitchen item", confirm WHICH item. Only call the tool once you have enough information. This makes the interaction feel professional and thorough.',
+                'When you DO call a tool, briefly tell the operator what you are doing — for example "OK, I am checking driver status now" or "Sending that apology SMS to the customer on order 4217". After the tool runs, confirm the result with specifics.',
+                'You have access to these operational domains: Drivers and delivery tracking. Inventory and stock monitoring in the prep kitchen. Kitchen flow control including halting items. Customer communications including SMS apologies and loyalty point credits. Marketing campaigns including drafting promos and sending push notifications to app users. Staff attendance tracking. Delivery route optimisation.',
+                'Current shift state: 4 evening drivers are clocked in. Driver 2 is running 15 minutes behind due to traffic on the A46. Fresh dough is at 20 portions which is below the Friday night safety threshold. The kitchen is nominal with nothing blocked. Marketing has no active campaigns. There is 1 lateness flag — Sarah was 15 minutes late for her shift. Logistics are on default route planning.',
+                'Keep spoken responses short enough for a live demo under 4 minutes. Do not ramble. Be decisive and operational.'
+            ].join('\n'),
             tools: [{
                 functionDeclarations: [
                     { name: 'check_driver_status', description: 'Check the status of all drivers, their shifts, delays, and delivery ETAs.' },
@@ -352,7 +364,8 @@ export async function startLiveAudioSession() {
                 emitLiveEvent({ type: 'live_status', status: 'connected' });
             },
             onmessage: (event: AudioServerMessage) => {
-                console.log('[LIVE] Received message:', event.serverContent ? 'serverContent' : 'other', JSON.stringify(event).substring(0, 200));
+                const keys = Object.keys(event as Record<string, unknown>);
+                console.log('[LIVE] Message keys:', keys.join(', '), '| preview:', JSON.stringify(event).substring(0, 300));
                 handleAudioMessage(event);
             },
             onclose: () => {
