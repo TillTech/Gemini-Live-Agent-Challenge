@@ -493,68 +493,87 @@ async function ensureTextSession() {
     return textSession;
 }
 
+
+
+// Gate flag: blocks sendRealtimeInput while a tool call is being processed.
+// The native-audio model rejects sendRealtimeInput during tool_call processing,
+// causing WebSocket error 1008. This is the documented workaround (GitHub issue #843).
+let toolCallPending = false;
+
 function handleAudioMessage(event: AudioServerMessage) {
     // Handle tool calls (top-level, per Gemini Live API spec)
     if (event.toolCall) {
-        console.log('[LIVE] Tool call received:', JSON.stringify(event.toolCall));
+        // Set the gate IMMEDIATELY to block audio sending during tool processing
+        toolCallPending = true;
+        console.log('[LIVE] Tool call received (audio gated):', JSON.stringify(event.toolCall));
         const responses: Array<{ id: string; name: string; response: { result: string } }> = [];
 
-        for (const fc of event.toolCall.functionCalls) {
-            if (fc.name === 'get_ui_state') {
-                responses.push({
-                    id: fc.id,
-                    name: fc.name,
-                    response: {
-                        result: buildUiStateToolResult()
-                    }
-                });
-                continue;
-            }
-
-            if (fc.name === 'get_operational_state') {
-                responses.push({
-                    id: fc.id,
-                    name: fc.name,
-                    response: { result: buildOperationalStateToolResult(fc.args) }
-                });
-                continue;
-            }
-
-            if (fc.name === 'clear_ui_widgets') {
-                const hasWidgets = visibleWidgetTools.length > 0;
-                if (!hasWidgets) {
-                    console.log('[LIVE] Ignoring clear_ui_widgets:', 'already clear');
+        try {
+            for (const fc of event.toolCall.functionCalls) {
+                if (fc.name === 'get_ui_state') {
                     responses.push({
                         id: fc.id,
                         name: fc.name,
-                        response: {
-                            result: 'No action needed. The visual stage is already empty.'
-                        }
+                        response: { result: buildUiStateToolResult() }
                     });
                     continue;
                 }
+
+                if (fc.name === 'get_operational_state') {
+                    responses.push({
+                        id: fc.id,
+                        name: fc.name,
+                        response: { result: buildOperationalStateToolResult(fc.args) }
+                    });
+                    continue;
+                }
+
+                if (fc.name === 'clear_ui_widgets') {
+                    const hasWidgets = visibleWidgetTools.length > 0;
+                    if (!hasWidgets) {
+                        console.log('[LIVE] Ignoring clear_ui_widgets:', 'already clear');
+                        responses.push({
+                            id: fc.id,
+                            name: fc.name,
+                            response: { result: 'No action needed. The visual stage is already empty.' }
+                        });
+                        continue;
+                    }
+                }
+
+                console.log('[LIVE] Executing tool:', fc.name, fc.args);
+                emitLiveEvent({
+                    type: 'function_call',
+                    id: fc.id,
+                    name: fc.name,
+                    args: fc.args ?? {}
+                });
+                let resultMsg = 'Action completed successfully.';
+                try {
+                    resultMsg = liveToolHandler ? liveToolHandler(fc.name, (fc.args as Record<string, string>) ?? {}) : 'Action completed successfully.';
+                } catch (toolErr) {
+                    console.error('[LIVE] Tool handler error for', fc.name, ':', toolErr);
+                    resultMsg = 'Action completed with a warning. Continue the conversation normally.';
+                }
+                // Tool result — keep it simple and short
+                const entry: { id: string; name: string; response: { result: string } } = {
+                    id: fc.id, name: fc.name, response: { result: resultMsg }
+                };
+                responses.push(entry);
             }
 
-            console.log('[LIVE] Executing tool:', fc.name, fc.args);
-            emitLiveEvent({
-                type: 'function_call',
-                id: fc.id,
-                name: fc.name,
-                args: fc.args ?? {}
-            });
-            let resultMsg = 'Action completed successfully.';
-            try {
-                resultMsg = liveToolHandler ? liveToolHandler(fc.name, (fc.args as Record<string, string>) ?? {}) : 'Action completed successfully.';
-            } catch (toolErr) {
-                console.error('[LIVE] Tool handler error for', fc.name, ':', toolErr);
-                resultMsg = 'Action completed with a warning. Continue the conversation normally.';
+            // Send tool responses back so the model can continue speaking
+            if (audioSession) {
+                console.log('[LIVE] Sending tool responses for:', responses.map(r => r.name).join(', '));
+                audioSession.sendToolResponse({ functionResponses: responses });
+                console.log('[LIVE] sendToolResponse succeeded');
             }
-            responses.push({ id: fc.id, name: fc.name, response: { result: resultMsg } });
-        }
-
-        // Send tool responses back so the model can continue speaking
-        if (audioSession) {
-            audioSession.sendToolResponse({ functionResponses: responses });
+        } catch (sendErr) {
+            console.error('[LIVE] Tool call processing error:', sendErr);
+        } finally {
+            // ALWAYS release the gate, even on error, to prevent permanent audio block
+            toolCallPending = false;
+            console.log('[LIVE] Audio gate released');
         }
         return;
     }
@@ -707,46 +726,44 @@ export async function startLiveAudioSession(options?: { greet?: boolean }) {
                             type: 'OBJECT',
                             properties: {
                                 widgetTools: {
-                                    type: 'ARRAY',
-                                    description: 'Optional widget tool ids to filter (e.g. check_inventory_status).',
-                                    items: { type: 'STRING' }
+                                    type: 'STRING',
+                                    description: 'Optional comma-separated widget tool ids to filter, e.g. "check_inventory_status,check_driver_status"'
                                 },
                                 panelIds: {
-                                    type: 'ARRAY',
-                                    description: 'Optional panel IDs to return exactly (e.g. store_stock, delivery_drivers).',
-                                    items: { type: 'STRING' }
+                                    type: 'STRING',
+                                    description: 'Optional comma-separated panel IDs to return, e.g. "store_stock,delivery_drivers"'
                                 },
                                 query: {
                                     type: 'STRING',
                                     description: 'Optional keyword filter across panel id/label/value/detail/metric.'
                                 },
                                 includeRecentActions: {
-                                    type: 'BOOLEAN',
-                                    description: 'Include recent action timeline entries. Defaults true.'
+                                    type: 'STRING',
+                                    description: 'Include recent action timeline entries. "true" or "false". Defaults to true.'
                                 }
                             }
                         }
                     },
                     { name: 'check_driver_status', description: 'Check the status of all drivers, their shifts, delays, and delivery ETAs.' },
-                    { name: 'send_customer_apology', description: 'Send an automated SMS apology to a customer about a delayed delivery.', parameters: { type: 'OBJECT', properties: { reason: { type: 'STRING', description: 'Reason for the apology' } } } },
-                    { name: 'add_loyalty_points', description: 'Add loyalty compensation points to a customer app wallet.', parameters: { type: 'OBJECT', properties: { points: { type: 'NUMBER', description: 'Number of points to add' } } } },
+                    { name: 'send_customer_apology', description: 'Send an automated SMS apology to a customer about a delayed delivery.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { reason: { type: 'STRING', description: 'Reason for the apology' } } } },
+                    { name: 'add_loyalty_points', description: 'Add loyalty compensation points to a customer app wallet.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { points: { type: 'STRING', description: 'Number of points to add, e.g. 500' } } } },
                     { name: 'check_inventory_status', description: 'Check current inventory and stock levels in the prep kitchen.' },
-                    { name: 'halt_kitchen_item', description: 'Halt preparation of a specific menu item to conserve ingredients.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'The menu item to halt, e.g. garlic bread' } }, required: ['item'] } },
-                    { name: 'draft_promo', description: 'Draft a targeted promotional campaign.', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Description of the promotion' } }, required: ['campaign'] } },
-                    { name: 'draft_marketing_push', description: 'Draft a push notification promotion for mobile app users.', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Description of the promotion' } }, required: ['campaign'] } },
-                    { name: 'dispatch_marketing_push', description: 'Dispatch a previously drafted push notification promotion (ONLY use after user approval).', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Description of the promotion' } }, required: ['campaign'] } },
-                    { name: 'record_attendance_note', description: 'Record a staff attendance exception such as lateness.', parameters: { type: 'OBJECT', properties: { staff: { type: 'STRING', description: 'Staff member name' }, note: { type: 'STRING', description: 'Attendance note' } } } },
-                    { name: 'reorder_supplier_item', description: 'Place a reorder with the primary supplier for a low-stock item.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Item to reorder' } } } },
-                    { name: 'optimise_driver_routes', description: 'Optimise active delivery routes based on current traffic conditions.' },
+                    { name: 'halt_kitchen_item', description: 'Halt preparation of a specific menu item to conserve ingredients.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'The menu item to halt, e.g. garlic bread' } }, required: ['item'] } },
+                    { name: 'draft_promo', description: 'Draft a promotional campaign with a specific offer. FIRST gather the full promotion details from the operator (what discount, which product, any promo code), THEN call this tool with a complete description of the offer.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Full description of the promotion including discount percentage, product, and any codes' } }, required: ['campaign'] } },
+                    { name: 'draft_marketing_push', description: 'Draft a push notification promotion for mobile app users. Gather full promotion details first.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Full description of the push notification content' } }, required: ['campaign'] } },
+                    { name: 'dispatch_marketing_push', description: 'Dispatch a previously drafted push notification promotion. ONLY call AFTER the operator has explicitly approved sending.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Description of the promotion being dispatched' } }, required: ['campaign'] } },
+                    { name: 'record_attendance_note', description: 'Record a staff attendance exception such as lateness.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { staff: { type: 'STRING', description: 'Staff member name' }, note: { type: 'STRING', description: 'Attendance note' } } } },
+                    { name: 'reorder_supplier_item', description: 'Place a reorder with the primary supplier for a low-stock item.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Item to reorder' } } } },
+                    { name: 'optimise_driver_routes', description: 'Optimise active delivery routes based on current traffic conditions.', behavior: 'NON_BLOCKING' },
                     { name: 'check_distribution_status', description: 'Check status of distribution fleet - warehouse-to-store transfers, central kitchen dispatches.' },
                     { name: 'check_warehouse_stock', description: 'Check warehouse and central kitchen bulk stock levels.' },
                     { name: 'check_costings', description: 'Check cost per dish, food cost breakdowns, margins.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Menu item to check costing for' } } } },
                     { name: 'check_wastage', description: 'Check food wastage reports and waste tracking data.' },
                     { name: 'check_kitchen_stations', description: 'Check kitchen station assignments - grill, fryer, expediting, line positions.' },
-                    { name: 'draft_email_campaign', description: 'Draft a branded email campaign.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Email subject/campaign name' } } } },
-                    { name: 'dispatch_email_campaign', description: 'Dispatch a drafted email campaign (ONLY use after user approval).', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Email subject/campaign name' } } } },
-                    { name: 'draft_sms_campaign', description: 'Draft an SMS text campaign.', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'SMS campaign message' } } } },
-                    { name: 'dispatch_sms_campaign', description: 'Dispatch a drafted SMS campaign (ONLY use after user approval).', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'SMS campaign message' } } } },
+                    { name: 'draft_email_campaign', description: 'Draft a branded email marketing campaign. IMPORTANT: FIRST gather the full campaign details from the operator — what is the offer (e.g. 20% off fish and chips), any promo code, and campaign name. THEN call this tool with a complete subject line describing the offer. Do NOT call this tool until you have the specific offer details.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Full campaign subject line describing the complete offer, e.g. 20 percent off fish and chips this weekend' } }, required: ['subject'] } },
+                    { name: 'dispatch_email_campaign', description: 'Dispatch a previously drafted email campaign. ONLY call AFTER the operator has explicitly approved sending.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Email subject/campaign name being dispatched' } }, required: ['subject'] } },
+                    { name: 'draft_sms_campaign', description: 'Draft an SMS text campaign. FIRST gather the message content from the operator, THEN call this tool.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'Full SMS campaign message text' } }, required: ['message'] } },
+                    { name: 'dispatch_sms_campaign', description: 'Dispatch a drafted SMS campaign. ONLY call AFTER operator approval.', behavior: 'NON_BLOCKING', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'SMS campaign message being dispatched' } }, required: ['message'] } },
                     { name: 'check_engagement', description: 'Check in-app engagement games status - plays, prizes, participation.' },
                     { name: 'check_rotas', description: 'Check staff rotas, shift schedules, and coverage gaps.' },
                     { name: 'check_staff_stations', description: 'Check staff station assignments across kitchen, warehouse, and management areas.' },
@@ -754,7 +771,7 @@ export async function startLiveAudioSession(options?: { greet?: boolean }) {
                     { name: 'check_payments', description: 'Check payment provider status, transaction count, settlement data.' },
                     { name: 'generate_report', description: 'Generate an operational report - sales, stock, performance, payments.', parameters: { type: 'OBJECT', properties: { type: { type: 'STRING', description: 'Type of report to generate' } } } },
                     { name: 'check_accounts', description: 'Check accounting overview - VAT returns, invoices, outstanding bills.' },
-                    { name: 'clear_ui_widgets', description: 'Clear widgets from the current UI stage before showing a fresh set.' }
+                    { name: 'clear_ui_widgets', description: 'Clear all widgets from the current UI stage. ONLY call when the operator explicitly asks to clear, reset, or remove widgets from the screen.' }
                 ]
             }]
         },
@@ -771,9 +788,11 @@ export async function startLiveAudioSession(options?: { greet?: boolean }) {
                 }
                 handleAudioMessage(event);
             },
-            onclose: () => {
-                console.log('[LIVE] Audio session CLOSED');
+            onclose: (ev: unknown) => {
+                const closeEvent = ev as { code?: number; reason?: string } | undefined;
+                console.log('[LIVE] Audio session CLOSED', closeEvent?.code ? `(code: ${closeEvent.code}, reason: ${closeEvent.reason || 'none'})` : '');
                 audioSession = null;
+                toolCallPending = false;
                 resetAudioTurnState();
                 greetingSentForSession = false;
                 greetingQueued = false;
@@ -914,6 +933,13 @@ export function syncLiveAudioState(snapshot: Snapshot, force = false) {
 }
 
 export async function sendLiveAudioChunk(audioBase64: string, mimeType: string, snapshot?: Snapshot) {
+    // Gate: block audio sending while a tool call is being processed.
+    // The native-audio model rejects sendRealtimeInput during tool_call processing
+    // (WebSocket error 1008 race condition — GitHub issue #843)
+    if (toolCallPending) {
+        return;
+    }
+
     const activeSession = await startLiveAudioSession();
 
     if (!activeSession) {
@@ -928,12 +954,18 @@ export async function sendLiveAudioChunk(audioBase64: string, mimeType: string, 
         audioTurnStatePrimed = true;
     }
 
-    activeSession.sendRealtimeInput({
-        audio: {
-            data: audioBase64,
-            mimeType
-        }
-    });
+    try {
+        activeSession.sendRealtimeInput({
+            audio: {
+                data: audioBase64,
+                mimeType
+            }
+        });
+    } catch (err) {
+        // Silently drop audio chunks that fail (e.g. session closing)
+        console.error('[LIVE] sendRealtimeInput error (dropped audio chunk):', (err as Error).message);
+        return;
+    }
 
     emitLiveEvent({ type: 'live_status', status: 'capturing' });
 }

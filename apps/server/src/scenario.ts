@@ -682,17 +682,24 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
         actions.push({ tool: 'check_kitchen_stations' });
     }
 
-    // ── Email campaign: distinguish draft vs dispatch ──
+    // ── Email campaign: detect from Tilly's speech that she's ACTIVELY drafting ──
+    // NOTE: draft_email_campaign function declaration also exists (Tier 1). Tier 2 is fallback
+    // only when Tilly describes doing the draft in speech without making a tool call.
+    // IMPORTANT: Only match phrases where Tilly says she IS drafting / HAS drafted —
+    // NOT phrases like "email campaign" which appear in general discussion/questions.
+    const emailActiveDraftPhrases = ['drafting the email', 'draft that email', 'drafting that email', 'putting the email together', 'creating the email', 'preparing the email', 'let me draft', 'i\'ll draft', 'making the email', 'make that email'];
     const emailDispatchPhrases = ['email dispatched', 'email sent', 'sent the email', 'campaign dispatched', 'dispatched the email'];
-    const emailDraftPhrases = ['drafting', 'email draft', 'email campaign', 'newsletter'];
-    const hasDraftAlready = current.actions.some(a => a.domain === 'email_campaigns' && a.status === 'draft');
+
+    // Only trigger if Tilly says she's ACTIVELY drafting AND the user's input has real content
+    // (not just "send an email" — must have offer details like "50% off burgers")
+    const hasOfferDetails = inp && inp.split(/\s+/).length > 5 && !/^(can we |please |let'?s )?(send|make|create|draft) (an |the )?(email|campaign)/i.test(inp);
+    if (includesAny(out, emailActiveDraftPhrases) && !includesAny(out, emailDispatchPhrases) && hasOfferDetails) {
+        const subject = inp || data.campaign || 'New email campaign';
+        actions.push({ tool: 'draft_email_campaign', args: { subject }, status: 'draft' });
+    }
 
     if (includesAny(out, emailDispatchPhrases)) {
         actions.push({ tool: 'dispatch_email_campaign', args: { campaign: inputData.campaign || data.campaign }, status: 'done' });
-    } else if (includesAny(out, emailDraftPhrases) && !hasDraftAlready) {
-        // Use the USER's input for campaign content, not Tilly's speech fragments
-        const campaignText = inputData.campaign || data.campaign;
-        actions.push({ tool: 'draft_email_campaign', args: { campaign: campaignText }, status: 'draft' });
     }
 
     // ── SMS campaign: Tilly confirms SMS draft ──

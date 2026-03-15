@@ -94,13 +94,6 @@ setLiveToolHandler((tool, args) => {
                 }
             }).catch(console.error).finally(() => { pendingImageGen = false; });
         }
-        // Also auto-create a promo/campaign builder alongside the email draft
-        if (prompt && !state.actions.some(a => a.domain === 'promotions')) {
-            const promoAction = { tool: 'draft_promo', args: { campaign: prompt, pct: args.pct || '', item: args.item || '' } };
-            applyAction(state, promoAction);
-            applyLiveWidgetTool('draft_promo');
-            broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-        }
         return isPromptReady
             ? 'Email drafting started. The email preview image is being generated. Tell the user to review the preview on screen and ask if they are happy to send it.'
             : 'Email campaign created but needs more detail. Ask the user to confirm the full offer details (what discount, what product, any code) so you can finalise the email with a proper preview image.';
@@ -176,39 +169,12 @@ subscribeLiveEvents((event) => {
                 state = applyPlan(state, inp, plan, 'live');
                 for (const action of plan.actions) {
                     applyLiveWidgetTool(action.tool);
-
-                    // Trigger background image generation for email drafts from Tier 2/3 paths
-                    // (Tier 1 tool handler already has its own trigger)
-                    if (action.tool === 'draft_email_campaign' && !turnFunctionCalls.has('draft_email_campaign') && !pendingImageGen) {
-                        // Only generate if no image exists yet for this draft
-                        const existingEmailAction = state.actions.find(a => a.domain === 'email_campaigns');
-                        if (existingEmailAction?.args?.imageUrl) continue;
-                        const prompt = action.args?.campaign || action.args?.subject || '';
-                        // Only generate image if we have a meaningful campaign description
-                        const isPromptReady = prompt.trim().split(/\s+/).length >= 3;
-                        if (!isPromptReady) continue;
-                        const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
-                        pendingImageGen = true;
-                        generateBrandImage(imagePrompt).then((b64) => {
-                            if (b64) {
-                                updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
-                                broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-                            }
-                        }).catch(console.error).finally(() => { pendingImageGen = false; });
-                        // Also auto-create a promo/campaign builder if missing
-                        if (!state.actions.some(a => a.domain === 'promotions')) {
-                            const promoAction = { tool: 'draft_promo', args: { campaign: prompt, pct: action.args?.pct || '', item: action.args?.item || '' } };
-                            applyAction(state, promoAction);
-                            applyLiveWidgetTool('draft_promo');
-                        }
-                    }
                 }
                 broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-                // Only sync audio state if Tier 1 tool handler didn't already handle this turn
-                // (Tier 1 tool calls already sync state via broadcastLiveEvent in the handler)
-                if (turnFunctionCalls.size === 0) {
-                    syncLiveAudioState(state);
-                }
+                // NOTE: do NOT call syncLiveAudioState here.
+                // State context is already synced with each audio chunk via audioTurnStatePrimed
+                // in sendLiveAudioChunk. Calling sendClientContent here injects fake 'user' role
+                // content that triggers empty turns and kills the session.
             }
         } catch (err) {
             console.error('[TURN_COMPLETE] Error processing turn:', err);
