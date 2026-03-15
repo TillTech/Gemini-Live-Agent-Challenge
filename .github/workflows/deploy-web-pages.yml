@@ -26,17 +26,41 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
-      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      REGION: europe-west2
+      SERVICE: tilly-live-ops
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve Cloud Run API URL
+        run: |
+          gcloud config set project "$PROJECT_ID"
+          SERVICE_URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')"
+          if [ -z "$SERVICE_URL" ]; then
+            echo "Could not resolve Cloud Run URL for service $SERVICE in $REGION"
+            exit 1
+          fi
+          echo "VITE_API_BASE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+          echo "Using API URL: $SERVICE_URL"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -44,20 +68,14 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.29.3
+      - name: Enable Corepack (pnpm)
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.29.3 --activate
+          pnpm --version
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Validate API base URL
-        run: |
-          if [ -z "$VITE_API_BASE_URL" ]; then
-            echo "VITE_API_BASE_URL is empty. Run the Cloud Run deploy workflow first, or set repo variable VITE_API_BASE_URL."
-            exit 1
-          fi
 
       - name: Build web
         run: pnpm --filter @tilly-live-ops/web build

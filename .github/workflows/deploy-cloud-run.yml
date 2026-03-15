@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   SERVICE: tilly-live-ops
   REGION: europe-west2
   REPOSITORY: tilly-live-ops
@@ -27,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write
 
     steps:
       - name: Checkout
@@ -77,41 +77,3 @@ jobs:
           SERVICE_URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')"
           echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
           echo "Cloud Run URL: $SERVICE_URL"
-
-      - name: Upsert VITE_API_BASE_URL repository variable
-        uses: actions/github-script@v7
-        env:
-          SERVICE_URL: ${{ steps.service_url.outputs.service_url }}
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const name = 'VITE_API_BASE_URL';
-            const value = process.env.SERVICE_URL;
-
-            if (!value) {
-              core.setFailed('SERVICE_URL is empty.');
-              return;
-            }
-
-            try {
-              await github.request('PATCH /repos/{owner}/{repo}/actions/variables/{name}', {
-                owner,
-                repo,
-                name,
-                value
-              });
-              core.info(`Updated variable ${name}=${value}`);
-            } catch (error) {
-              if (error.status === 404) {
-                await github.request('POST /repos/{owner}/{repo}/actions/variables', {
-                  owner,
-                  repo,
-                  name,
-                  value
-                });
-                core.info(`Created variable ${name}=${value}`);
-              } else {
-                throw error;
-              }
-            }
