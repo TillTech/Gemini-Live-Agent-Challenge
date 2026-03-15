@@ -81,16 +81,13 @@ setLiveToolHandler((tool, args) => {
 
     if (tool === 'draft_email_campaign') {
         const prompt = args.campaign || args.subject || 'A promotional hospitality email marketing campaign';
-        console.log('[IMAGE] Starting background image generation for:', prompt);
-        generateBrandImage(`A complete, fully designed marketing email layout for a premium hospitality brand. Include a mock brand logo at the top, a stunning hero photography image promoting: ${prompt}, followed by an elegant text layout describing the offer, a clear styled 'Call to Action' button, and a professional email footer containing social media icons and legal text. Professional UI/UX layout, high resolution, hyper-realistic web design.`).then((b64) => {
+        const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
+        generateBrandImage(imagePrompt).then((b64) => {
             if (b64) {
-                console.log('[IMAGE] ✅ Image generated successfully, length:', b64.length);
                 updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
                 broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-            } else {
-                console.error('[IMAGE] ❌ generateBrandImage returned null');
             }
-        }).catch((err) => console.error('[IMAGE] ❌ Promise rejected:', err));
+        }).catch(console.error);
         return 'Email drafting started in the background. Tell the user to review the preview on screen and ask if they are happy to send it.';
     }
 
@@ -164,17 +161,17 @@ subscribeLiveEvents((event) => {
                 // Trigger background image generation for email drafts from Tier 2/3 paths
                 // (Tier 1 tool handler already has its own trigger)
                 if (action.tool === 'draft_email_campaign' && !turnFunctionCalls.has('draft_email_campaign')) {
+                    // Only generate if no image exists yet for this draft
+                    const existingEmailAction = state.actions.find(a => a.domain === 'email_campaigns');
+                    if (existingEmailAction?.args?.imageUrl) continue;
                     const prompt = action.args?.campaign || action.args?.subject || 'A promotional hospitality email marketing campaign';
-                    console.log('[IMAGE] Tier 2/3 triggered image generation for:', prompt);
-                    generateBrandImage(`A complete, fully designed marketing email layout for a premium hospitality brand. Include a mock brand logo at the top, a stunning hero photography image promoting: ${prompt}, followed by an elegant text layout describing the offer, a clear styled 'Call to Action' button, and a professional email footer containing social media icons and legal text. Professional UI/UX layout, high resolution, hyper-realistic web design.`).then((b64) => {
+                    const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
+                    generateBrandImage(imagePrompt).then((b64) => {
                         if (b64) {
-                            console.log('[IMAGE] ✅ Image generated successfully, length:', b64.length);
                             updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
                             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-                        } else {
-                            console.error('[IMAGE] ❌ generateBrandImage returned null');
                         }
-                    }).catch((err) => console.error('[IMAGE] ❌ Promise rejected:', err));
+                    }).catch(console.error);
                 }
             }
             broadcastLiveEvent({ type: 'snapshot', snapshot: state });

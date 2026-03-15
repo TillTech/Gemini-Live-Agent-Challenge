@@ -161,6 +161,7 @@ export function App() {
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
     const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('tilly-theme') as 'dark' | 'light') ?? 'dark');
     const [activeViz, setActiveViz] = useState<{id: string; tool: string; ts: number; args: Record<string, string>}[]>([]);
+    const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
     const [showComposer, setShowComposer] = useState(false);
     const seenActionIds = useRef<Set<string>>(new Set());
 
@@ -499,6 +500,19 @@ export function App() {
                         setActiveViz([]);
                         continue;
                     }
+                    // Skip creating a new card for dispatch actions if a draft card already exists
+                    // (the draft→dispatch sync below will update the existing card)
+                    const draftCounterparts: Record<string, string> = {
+                        dispatch_email_campaign: 'draft_email_campaign',
+                        dispatch_sms_campaign: 'draft_sms_campaign',
+                        dispatch_marketing_push: 'draft_marketing_push',
+                        dispatch_promo: 'draft_promo',
+                    };
+                    const draftTool = draftCounterparts[tool];
+                    if (draftTool) {
+                        const hasDraftCard = activeViz.some(v => v.tool === draftTool);
+                        if (hasDraftCard) continue; // let the sync handle the transition
+                    }
                     if (isCheckTool(tool)) {
                         upsertVizCard(tool, (a as any).args ?? {}, {
                             reorder: false,
@@ -510,12 +524,27 @@ export function App() {
                 }
                 
                 // Sync args for currently visible cards (handles async updates like image generation)
+                // Also handles tool transitions (e.g. draft_email_campaign → dispatch_email_campaign)
                 setActiveViz(prev => prev.map(viz => {
-                    const snapAction = p.snapshot.actions.find(a => (a as any).tool === viz.tool || a.domain === domainToolMap[viz.tool] || a.domain === viz.tool.replace('send_', '').replace('check_', ''));
-                    // We can just find the action by tool name using the same resolve logic
+                    // Try matching by resolved tool name first
                     const mappedSnapAction = p.snapshot.actions.find(a => resolveActionTool(a) === viz.tool);
                     if (mappedSnapAction && mappedSnapAction.args && JSON.stringify(mappedSnapAction.args) !== JSON.stringify(viz.args)) {
                         return { ...viz, args: { ...viz.args, ...mappedSnapAction.args } };
+                    }
+
+                    // Handle draft→dispatch transitions: check if a dispatched version exists for the same domain
+                    const draftDispatchPairs: Record<string, string> = {
+                        draft_email_campaign: 'dispatch_email_campaign',
+                        draft_sms_campaign: 'dispatch_sms_campaign',
+                        draft_marketing_push: 'dispatch_marketing_push',
+                        draft_promo: 'dispatch_promo',
+                    };
+                    const dispatchTool = draftDispatchPairs[viz.tool];
+                    if (dispatchTool) {
+                        const dispatchAction = p.snapshot.actions.find(a => resolveActionTool(a) === dispatchTool);
+                        if (dispatchAction) {
+                            return { ...viz, tool: dispatchTool, args: { ...viz.args, ...(dispatchAction.args || {}) } };
+                        }
                     }
                     return viz;
                 }));
@@ -1314,21 +1343,31 @@ export function App() {
                                                 </div>
                                                 <div className="promoCard">
                                                     {v.args.imageUrl ? (
-                                                        <div className="promoImage" style={{
-                                                            width: '100%', height: 120, borderRadius: 8, marginBottom: 12,
-                                                            backgroundImage: `url(${v.args.imageUrl})`, backgroundSize: 'cover',
-                                                            backgroundPosition: 'center', border: '1px solid var(--border)'
-                                                        }} />
+                                                        <img
+                                                            src={v.args.imageUrl}
+                                                            alt="Email campaign preview"
+                                                            onClick={() => setLightboxUrl(v.args.imageUrl)}
+                                                            style={{
+                                                                width: '100%',
+                                                                maxHeight: 360,
+                                                                objectFit: 'contain',
+                                                                borderRadius: 8,
+                                                                marginBottom: 8,
+                                                                border: '1px solid var(--glass-border)',
+                                                                background: 'var(--surface-sunken)',
+                                                                cursor: 'zoom-in',
+                                                            }}
+                                                        />
                                                     ) : (
                                                         <div className="promoImagePlaceholder" style={{
-                                                            width: '100%', height: 120, borderRadius: 8, marginBottom: 12,
+                                                            width: '100%', height: 160, borderRadius: 8, marginBottom: 8,
                                                             background: 'var(--surface-sunken)', border: '1px dashed var(--border)',
                                                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                             color: 'var(--text-dim)', fontSize: '0.8rem',
                                                             animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
                                                             textAlign: 'center', padding: '0 10px'
                                                         }}>
-                                                            Generating Email Layout...
+                                                            ✨ Generating Email Preview...
                                                         </div>
                                                     )}
                                                     <div className="promoHeadline">{v.args.campaign || v.args.subject || 'Email Campaign'}</div>
@@ -1614,6 +1653,47 @@ export function App() {
             )}
 
             {err && <span className="errMsg" style={{ padding: '0.5rem 1rem' }}>{err}</span>}
+
+            {/* Lightbox modal for full-size image preview */}
+            {lightboxUrl && (
+                <div
+                    onClick={() => setLightboxUrl(null)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setLightboxUrl(null); }}
+                    tabIndex={0}
+                    role="dialog"
+                    aria-label="Image preview"
+                    style={{
+                        position: 'fixed', inset: 0, zIndex: 9999,
+                        background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'zoom-out', animation: 'fadeIn 0.2s ease',
+                    }}
+                >
+                    <button
+                        type="button"
+                        onClick={() => setLightboxUrl(null)}
+                        style={{
+                            position: 'absolute', top: 16, right: 16,
+                            background: 'rgba(255,255,255,0.15)', border: 'none',
+                            color: '#fff', fontSize: '1.5rem', width: 40, height: 40,
+                            borderRadius: '50%', cursor: 'pointer', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center',
+                        }}
+                        aria-label="Close preview"
+                    >×</button>
+                    <img
+                        src={lightboxUrl}
+                        alt="Full size preview"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            maxWidth: '90vw', maxHeight: '90vh',
+                            objectFit: 'contain', borderRadius: 12,
+                            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+                            cursor: 'default',
+                        }}
+                    />
+                </div>
+            )}
         </main>
     );
 }

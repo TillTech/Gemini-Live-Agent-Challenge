@@ -598,8 +598,9 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
         }});
     }
 
-    // ── Send push: Tilly confirms she's sent a notification ──
-    if (includesAny(out, ['sent the push', 'notification sent', 'push sent', 'push notification has been', 'sent to all', 'delivered to', 'sent it out', 'notification has been sent', 'going out now', 'notifications are going'])) {
+    // ── Send push: Tilly confirms she's sent a push notification ──
+    // Note: these patterns must be push-specific to avoid false positives on email/SMS dispatch
+    if (includesAny(out, ['sent the push', 'push notification sent', 'push sent', 'push notification has been', 'push going out', 'notifications are going'])) {
         if (!actions.some(a => a.tool === 'draft_promo')) {
             actions.push({ tool: 'send_marketing_push', args: {
                 campaign: data.campaign || data.item || 'promotion',
@@ -679,8 +680,14 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
         actions.push({ tool: 'check_kitchen_stations' });
     }
 
-    // ── Email campaign: Tilly confirms email draft ──
-    if (includesAny(out, ['email sent', 'email campaign', 'newsletter', 'email dispatched', 'sent the email'])) {
+    // ── Email campaign: distinguish draft vs dispatch ──
+    const emailDispatchPhrases = ['email dispatched', 'email sent', 'sent the email', 'campaign dispatched', 'dispatched the email'];
+    const emailDraftPhrases = ['drafting', 'email draft', 'email campaign', 'newsletter'];
+    const hasDraftAlready = current.actions.some(a => a.domain === 'email_campaigns' && a.status === 'draft');
+
+    if (includesAny(out, emailDispatchPhrases)) {
+        actions.push({ tool: 'dispatch_email_campaign', args: { campaign: data.campaign }, status: 'done' });
+    } else if (includesAny(out, emailDraftPhrases) && !hasDraftAlready) {
         actions.push({ tool: 'draft_email_campaign', args: { campaign: data.campaign }, status: 'draft' });
     }
 
@@ -845,8 +852,22 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     if (includesAny(text, ['promo', 'promotion', 'campaign', 'loaded fries', 'iced latte', 'discount'])) {
         actions.push({ tool: 'draft_promo', args: { campaign: data.campaign || data.item || 'promotion', pct: data.pct } });
     }
-    if (includesAny(text, ['push', 'notification', 'qr code', 'app users', 'send it'])) {
+    if (includesAny(text, ['push notification', 'push promo', 'qr code', 'app users', 'send a push', 'send push'])) {
         actions.push({ tool: 'send_marketing_push', args: { campaign: data.campaign || data.item || 'promotion', pct: data.pct } });
+    }
+    // Dispatch pending drafts when user confirms ("send it", "yes send", "go ahead", etc.)
+    const isConfirmation = /\b(send it|send the|yes|go ahead|do it|confirm|dispatch|approved|let's send|send that)\b/i.test(text);
+    if (isConfirmation && !actions.some(a => a.tool.includes('dispatch'))) {
+        const hasPendingEmailDraft = current.actions.some(a => a.domain === 'email_campaigns' && a.status === 'draft');
+        const hasPendingSMSDraft = current.actions.some(a => a.domain === 'sms_campaigns' && a.status === 'draft');
+        const hasPendingPushDraft = current.actions.some(a => a.domain === 'push_notifications' && a.status === 'draft');
+        if (hasPendingEmailDraft && includesAny(text, ['email', 'e-mail', 'campaign', 'send it', 'send that', 'go ahead', 'yes', 'do it', 'confirm', 'dispatch', 'approved'])) {
+            actions.push({ tool: 'dispatch_email_campaign', args: { campaign: data.campaign } });
+        } else if (hasPendingSMSDraft) {
+            actions.push({ tool: 'dispatch_sms_campaign', args: { message: data.campaign } });
+        } else if (hasPendingPushDraft) {
+            actions.push({ tool: 'dispatch_marketing_push', args: { campaign: data.campaign } });
+        }
     }
     if (data.campaign && !actions.some((a) => a.tool.includes('draft_') || a.tool.includes('dispatch_'))) {
         const low = text.toLowerCase();
