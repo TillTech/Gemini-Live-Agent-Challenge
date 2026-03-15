@@ -139,81 +139,86 @@ subscribeLiveEvents((event) => {
 
     // When a live voice turn completes, determine actions via multiple fallback paths
     if (event.type === 'turn_complete') {
-        const inp = event.inputText || '';
-        const out = event.outputText || '';
-        if (inp || out) {
-            // 1. Try output-transcript matching first (most accurate)
-            let plan = createSmartPlan(inp, out, state);
-            plan.actions = plan.actions.filter(a => !turnFunctionCalls.has(a.tool));
-            plan.actions = plan.actions.filter(a => a.tool !== 'clear_ui_widgets' || (hasLiveVisibleWidgets() && hasClearUiIntent(inp)));
+        try {
+            const inp = event.inputText || '';
+            const out = event.outputText || '';
+            if (inp || out) {
+                // 1. Try output-transcript matching first (most accurate)
+                let plan = createSmartPlan(inp, out, state);
+                plan.actions = plan.actions.filter(a => !turnFunctionCalls.has(a.tool));
+                plan.actions = plan.actions.filter(a => a.tool !== 'clear_ui_widgets' || (hasLiveVisibleWidgets() && hasClearUiIntent(inp)));
 
-            // 2. Coverage layer: merge request-derived info actions so broad asks do not collapse to one tool.
-            if (inp) {
-                const fallback = createMockPlan(inp, state);
-                const low = inp.toLowerCase();
-                const hasConfirmation = /\b(yes|yep|yeah|go ahead|send it|do it|confirm|go for it|that's right|sounds good|perfect|ok send|ok do|please do|let's do|approved)\b/i.test(low);
-                const hasDetail = /\d+%|\d+ percent/i.test(low) || low.split(/\s+/).length > 8;
+                // 2. Coverage layer: merge request-derived info actions so broad asks do not collapse to one tool.
+                if (inp) {
+                    const fallback = createMockPlan(inp, state);
+                    const low = inp.toLowerCase();
+                    const hasConfirmation = /\b(yes|yep|yeah|go ahead|send it|do it|confirm|go for it|that's right|sounds good|perfect|ok send|ok do|please do|let's do|approved)\b/i.test(low);
+                    const hasDetail = /\d+%|\d+ percent/i.test(low) || low.split(/\s+/).length > 8;
 
-                const filteredFallback = fallback.actions.filter(a => {
-                    // Don't let the coverage layer re-add draft/dispatch actions already handled by Tier 1
-                    if (turnFunctionCalls.has(a.tool)) return false;
-                    if (a.tool.startsWith('draft_') && turnFunctionCalls.has(a.tool)) return false;
-                    if (INFO_TOOLS.has(a.tool)) return true;
-                    return hasConfirmation || hasDetail;
-                });
+                    const filteredFallback = fallback.actions.filter(a => {
+                        // Don't let the coverage layer re-add draft/dispatch actions already handled by Tier 1
+                        if (turnFunctionCalls.has(a.tool)) return false;
+                        if (a.tool.startsWith('draft_') && turnFunctionCalls.has(a.tool)) return false;
+                        if (INFO_TOOLS.has(a.tool)) return true;
+                        return hasConfirmation || hasDetail;
+                    });
 
-                if (plan.actions.length === 0 && filteredFallback.length > 0) {
-                    plan = { ...fallback, actions: filteredFallback };
-                } else {
-                    const infoFallback = filteredFallback.filter((a) => INFO_TOOLS.has(a.tool));
-                    if (infoFallback.length > 0) {
-                        plan.actions = mergeUniqueActions(plan.actions, infoFallback, 8);
-                    }
-                }
-            }
-
-            state = applyPlan(state, inp, plan, 'live');
-            for (const action of plan.actions) {
-                applyLiveWidgetTool(action.tool);
-
-                // Trigger background image generation for email drafts from Tier 2/3 paths
-                // (Tier 1 tool handler already has its own trigger)
-                if (action.tool === 'draft_email_campaign' && !turnFunctionCalls.has('draft_email_campaign') && !pendingImageGen) {
-                    // Only generate if no image exists yet for this draft
-                    const existingEmailAction = state.actions.find(a => a.domain === 'email_campaigns');
-                    if (existingEmailAction?.args?.imageUrl) continue;
-                    const prompt = action.args?.campaign || action.args?.subject || '';
-                    // Only generate image if we have a meaningful campaign description
-                    const isPromptReady = prompt.trim().split(/\s+/).length >= 3;
-                    if (!isPromptReady) continue;
-                    const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
-                    pendingImageGen = true;
-                    generateBrandImage(imagePrompt).then((b64) => {
-                        if (b64) {
-                            updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
-                            broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+                    if (plan.actions.length === 0 && filteredFallback.length > 0) {
+                        plan = { ...fallback, actions: filteredFallback };
+                    } else {
+                        const infoFallback = filteredFallback.filter((a) => INFO_TOOLS.has(a.tool));
+                        if (infoFallback.length > 0) {
+                            plan.actions = mergeUniqueActions(plan.actions, infoFallback, 8);
                         }
-                    }).catch(console.error).finally(() => { pendingImageGen = false; });
-                    // Also auto-create a promo/campaign builder if missing
-                    if (!state.actions.some(a => a.domain === 'promotions')) {
-                        const promoAction = { tool: 'draft_promo', args: { campaign: prompt, pct: action.args?.pct || '', item: action.args?.item || '' } };
-                        applyAction(state, promoAction);
-                        applyLiveWidgetTool('draft_promo');
                     }
                 }
+
+                state = applyPlan(state, inp, plan, 'live');
+                for (const action of plan.actions) {
+                    applyLiveWidgetTool(action.tool);
+
+                    // Trigger background image generation for email drafts from Tier 2/3 paths
+                    // (Tier 1 tool handler already has its own trigger)
+                    if (action.tool === 'draft_email_campaign' && !turnFunctionCalls.has('draft_email_campaign') && !pendingImageGen) {
+                        // Only generate if no image exists yet for this draft
+                        const existingEmailAction = state.actions.find(a => a.domain === 'email_campaigns');
+                        if (existingEmailAction?.args?.imageUrl) continue;
+                        const prompt = action.args?.campaign || action.args?.subject || '';
+                        // Only generate image if we have a meaningful campaign description
+                        const isPromptReady = prompt.trim().split(/\s+/).length >= 3;
+                        if (!isPromptReady) continue;
+                        const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
+                        pendingImageGen = true;
+                        generateBrandImage(imagePrompt).then((b64) => {
+                            if (b64) {
+                                updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
+                                broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+                            }
+                        }).catch(console.error).finally(() => { pendingImageGen = false; });
+                        // Also auto-create a promo/campaign builder if missing
+                        if (!state.actions.some(a => a.domain === 'promotions')) {
+                            const promoAction = { tool: 'draft_promo', args: { campaign: prompt, pct: action.args?.pct || '', item: action.args?.item || '' } };
+                            applyAction(state, promoAction);
+                            applyLiveWidgetTool('draft_promo');
+                        }
+                    }
+                }
+                broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+                // Delay state sync to avoid interrupting the model's audio output
+                // (sendClientContent during model speech can cause audio cutoff)
+                const hasDraftOrDispatch = plan.actions.some(a => a.tool.startsWith('draft_') || a.tool.startsWith('dispatch_'));
+                if (hasDraftOrDispatch || turnFunctionCalls.size > 0) {
+                    setTimeout(() => syncLiveAudioState(state), 2000);
+                } else {
+                    syncLiveAudioState(state);
+                }
             }
-            broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-            // Delay state sync to avoid interrupting the model's audio output
-            // (sendClientContent during model speech can cause audio cutoff)
-            const hasDraftOrDispatch = plan.actions.some(a => a.tool.startsWith('draft_') || a.tool.startsWith('dispatch_'));
-            if (hasDraftOrDispatch || turnFunctionCalls.size > 0) {
-                setTimeout(() => syncLiveAudioState(state), 2000);
-            } else {
-                syncLiveAudioState(state);
-            }
+        } catch (err) {
+            console.error('[TURN_COMPLETE] Error processing turn:', err);
+        } finally {
+            turnFunctionCalls.clear();
+            lastOperatorInput = '';
         }
-        turnFunctionCalls.clear();
-        lastOperatorInput = '';
     }
 });
 

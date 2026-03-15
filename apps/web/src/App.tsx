@@ -737,6 +737,7 @@ export function App() {
     }
 
     async function stopLive() {
+        greetPendingRef.current = false;
         setListening(false);
         drainAudioQ();
         await teardown(false);
