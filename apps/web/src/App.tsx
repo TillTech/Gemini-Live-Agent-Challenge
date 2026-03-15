@@ -877,7 +877,7 @@ export function App() {
     // Acting = server is executing tools after a completed turn
     const isActing = liveState === 'processing';
     const orbState = isConnecting ? 'connecting' : isGreeting ? 'speaking' : isSpeaking ? 'speaking' : isActing ? 'acting' : isProcessing ? 'processing' : isLive ? 'listening' : 'idle';
-    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'acting' ? '⚡ Taking action' : orbState === 'processing' ? '◌ Processing' : orbState === 'connecting' ? '◌ Waking up...' : orbState === 'listening' ? '● Listening' : '○ Click to talk or type';
+    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'acting' ? '⚡ Taking action' : orbState === 'processing' ? '◌ Processing' : orbState === 'connecting' ? '◌ Waking up...' : orbState === 'listening' ? '● Listening' : '○ Click to start';
     const dotClass = status === 'off' ? 'offline' : isLive || isConnecting ? 'running' : '';
     const statusText = (!isLive && !isConnecting) ? 'Ready' : isSpeaking || isGreeting ? 'Speaking' : isActing ? 'Acting' : isProcessing ? 'Processing' : orbState === 'connecting' ? 'Connecting' : 'Listening';
 
