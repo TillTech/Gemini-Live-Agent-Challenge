@@ -4,7 +4,7 @@
 
 ### Real-time voice agent for hospitality operations
 
-*One live conversation replaces scattered operational checks, repeated dashboard hopping, and delayed response to issues.*
+*90% of people use only 10% of deep or complex platforms and their tools. Tilly changes that — breathing light into the darkest corners, making it easy, fast, and simple to find even the most hidden tools and use them properly. All in minutes, with no prior knowledge required.*
 
 [![Built with Gemini](https://img.shields.io/badge/Built%20with-Gemini%20Live%20API-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
 [![Competition](https://img.shields.io/badge/Gemini%20Live-Agent%20Challenge-FF6F00?style=for-the-badge&logo=devpost&logoColor=white)](https://devpost.com/)
@@ -16,11 +16,39 @@
 
 ## What This Is
 
-Tilly Live Ops is a new public project inspired by real hospitality operations patterns at [TillTech](https://till.tech). An operator talks to Tilly through a live voice interface — she can see across drivers, inventory, kitchen, marketing, staffing, and logistics, take corrective actions, and update the command surface in real time.
+Tilly Live Ops is a **pure-voice enterprise orchestrator**. An operator talks to Tilly through a real-time audio stream — entirely hands-free — and she translates that natural conversation into complex backend actions: live stock routing, loyalty point adjustments, staffing checks, and multimodal email generation. Actions execute silently in the background while the conversation keeps flowing.
 
-This is **not a chatbot**. The centre of the experience is a live operations canvas with status panels, action timelines, and animated visualisation cards that respond to natural voice conversation.
+This is **not a chatbot**. The centre of the experience is a live operations canvas with status panels, an action timeline, and animated visualisation cards that respond to natural voice conversation in real time.
 
 > Built for the [Gemini Live Agent Challenge](https://devpost.com/) — **Competition Category:** Live Agents 🗣️ (Real-time Interaction)
+
+<br/>
+
+## Architecture
+
+<div align="center">
+
+![Architecture Diagram](docs/architecture-diagram.png)
+
+</div>
+
+### Dual-Layer AI Architecture
+
+To achieve reliable, low-latency voice interaction with accurate backend execution, Tilly uses a dual-layer approach:
+
+**The Voice Layer** — The Gemini 2.5 Flash native audio model handles real-time, bidirectional audio over WebSockets. This is Tilly's "mouth and ears" — she listens, responds naturally, and can trigger function calls (tool use) directly during the conversation.
+
+**The Action Layer** — A secondary background text model handles structured JSON planning when additional intelligence is needed. This ensures backend actions execute accurately without interrupting the live audio stream. A dedicated image model generates branded email campaign visuals on demand.
+
+### 3-Tier Detection System
+
+The Gemini Live audio model does not always reliably call tools directly during native audio streaming, so Tilly uses a 3-tier detection system to maximise reliability:
+
+1. **Tier 1 — function_call:** When Gemini does call a tool natively, it fires immediately. Tracked per turn to prevent duplicates.
+2. **Tier 2 — Output-transcript matching:** Scans Tilly's spoken response for confirmation phrases and extracts dynamic data from the conversation.
+3. **Tier 3 — Input keyword fallback:** Matches the operator's words directly. Info queries (drivers, stock, staff) fire immediately. Action queries (promotions, push notifications) wait for confirmation or specific detail.
+
+All actions update the state via SSE — panels, action timeline, and centre-stage viz cards respond in real-time.
 
 <br/>
 
@@ -40,12 +68,12 @@ A single continuous voice conversation during a live shift — taken from the ac
 ## Tech Stack
 
 | Layer | Technology | Version |
-|-------|-----------|---------|
+|-------|-----------|---------| 
 | Voice | Gemini Live API | `gemini-2.5-flash-native-audio-preview-12-2025` |
-| Text + Image | Nano Banana 2 (Gemini 3.1 Flash Image) | `gemini-3.1-flash-image-preview` |
-| Backend | Node.js + tsx (plain `node:http`) | Node 22+ |
+| Text + Image | Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` |
+| Backend | Node.js (native `node:http`) | Node 22+ |
 | Frontend | React + Vite | React ^19.1.0, Vite ^6.3.5 |
-| AI SDK | @google/genai | ^1.11.0 |
+| AI SDK | @google/genai | ^1.45.0 |
 | Infra | Google Cloud Run | Terraform |
 | Design | CSS custom properties | Dark/light theme tokens |
 
@@ -71,57 +99,43 @@ All variables are documented in [`.env.example`](.env.example):
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GOOGLE_API_KEY` | Yes | — | Gemini API key |
-| `GEMINI_LIVE_MODEL` | Yes | — | `gemini-2.5-flash-native-audio-preview-12-2025` |
-| `GEMINI_MODEL` | No | `gemini-3-flash-preview` | Text model for planning fallback |
-| `GOOGLE_CLOUD_PROJECT` | No | — | GCP project ID (for Vertex AI or deployment) |
+| `GEMINI_LIVE_MODEL` | No | `gemini-2.5-flash-native-audio-preview-12-2025` | Native audio model for real-time voice |
+| `GEMINI_MODEL` | No | `gemini-3.1-flash-image-preview` | Text model for planning fallback |
+| `GEMINI_IMAGE_MODEL` | No | `gemini-3.1-flash-image-preview` | Image generation model |
+| `GOOGLE_CLOUD_PROJECT` | No | — | GCP project ID (for deployment) |
 | `GOOGLE_CLOUD_REGION` | No | `europe-west2` | GCP region |
 | `GOOGLE_GENAI_USE_VERTEXAI` | No | `false` | Use Vertex AI instead of API key auth |
 
 <br/>
 
-## Architecture
+## Project Structure
 
 ```
 apps/
   server/src/
-    index.ts          — HTTP server, SSE broadcast, 3-tier action detection
-    liveSession.ts    — Gemini Live API session, audio streaming, transcripts
-    gemini.ts         — GenAI SDK client, text-model planning path
-    scenario.ts       — State engine, panel data, smart + keyword planners
+    index.ts          — HTTP server, SSE broadcast, tool handler, 3-tier action detection
+    liveSession.ts    — Gemini Live API session, audio streaming, function calling, transcripts
+    gemini.ts         — GenAI SDK client, text-model planning path, brand image generation
+    scenario.ts       — State engine, panel data, SmartPlan keyword + speech detection
     types.ts          — Snapshot, ActionItem, PlannedAction, PanelState
   web/src/
-    App.tsx           — Single-component UI
-    styles.css        — Design system with dark/light tokens
-docs/                 — Demo script, brand story, submission drafts
-infra/                — Cloud Run Terraform config
+    App.tsx           — Single-component UI with voice orb, viz cards, and dashboard
+    styles.css        — Design system with dark/light theme tokens
+docs/                 — Demo script, brand story, architecture diagram, submission drafts
+infra/                — Cloud Run Terraform config + Dockerfile
 ```
-
-### How Voice → Actions Works
-
-The Gemini Live audio model does not reliably call tools directly, so Tilly uses a 3-tier detection system:
-
-1. **Tier 1 — function_call:** When Gemini does call a tool, it fires immediately. Tracked per turn to prevent duplicates.
-2. **Tier 2 — Output-transcript matching:** Scans Tilly's spoken response for confirmation phrases and extracts dynamic data.
-3. **Tier 3 — Input keyword fallback:** Matches the user's words. Info queries (drivers, stock, staff) fire immediately. Action queries (promotions, push notifications) wait for confirmation or specific detail.
-
-All actions update the state via SSE — panels, action timeline, and centre-stage viz cards respond in real-time.
 
 <br/>
 
 ## Features
 
 - 🎙️ **Real-time voice** — natural conversation via Gemini Live API, with interrupt and follow-up support
-- 📊 **Live command surface** — 6 operational panels (Drivers, Inventory, Kitchen, Marketing, Customers, Staff)
-- 🎬 **Action visualisation** — animated centre-stage cards show actions in progress with data from the live conversation
-- ⏱️ **Action timeline** — every action logged with status and detail
+- 📊 **Live command surface** — operational panels (Drivers, Inventory, Kitchen, Marketing, Customers, Staff)
+- 🎬 **Action visualisation** — animated centre-stage cards show actions in progress with live data
+- 📧 **Multimodal email generation** — AI-generated branded campaign images from voice descriptions
+- ⏱️ **Action timeline** — every action logged with status, timestamp, and detail
 - 🌙 **Dark / Light theme** — full theme system via CSS custom properties
 - 🔄 **Session resilience** — reconnection cooldown prevents cascading failures
-
-<br/>
-
-## Data
-
-This project uses **synthetic demo data** shaped to reflect real hospitality workflows. No private customer, financial, or production data is included. See [docs/public-data-policy.md](docs/public-data-policy.md).
 
 <br/>
 
@@ -135,9 +149,103 @@ pnpm -r build
 
 <br/>
 
+## Reproducible Testing Instructions
+
+### Prerequisites
+
+- **Node.js** 22+ ([download](https://nodejs.org/))
+- **pnpm** 9+ — install via `corepack enable` (bundled with Node.js)
+- **Google Gemini API key** — get one at [aistudio.google.com](https://aistudio.google.com/apikey)
+  - Image generation requires a **paid** API key (pay-as-you-go billing enabled)
+- **Microphone access** — the browser will request mic permission for voice interaction
+
+### Setup
+
+```bash
+git clone https://github.com/TillTech/Gemini-Live-Agent-Challenge.git
+cd Gemini-Live-Agent-Challenge
+pnpm install
+cp .env.example .env
+```
+
+Open `.env` and paste your Gemini API key:
+
+```
+GOOGLE_API_KEY=your-key-here
+```
+
+### Run Locally
+
+```bash
+pnpm dev
+```
+
+| Service | URL |
+|---------|-----|
+| Web UI | http://localhost:5173 |
+| API Server | http://localhost:8787 |
+
+### Step-by-Step Testing Walkthrough
+
+> 💡 **Tip:** Use headphones with a microphone for best results. Tilly responds with real-time audio.
+
+#### 1. Start a session
+- Open http://localhost:5173 in Chrome
+- Click the central **orb** — it will pulse and connect
+- **Expected:** Tilly greets you by saying *"Good afternoon, I am Tilly. Who am I speaking with today?"*
+- Say your name — Tilly will greet you and ask what you need help with
+
+#### 2. Check operational status (voice command)
+- Say: *"Give me a quick operational rundown"* or *"Check the drivers"*
+- **Expected:** Dashboard panels populate on the left side with live data — driver statuses, delivery ETAs, and staffing information. A viz card appears centre-stage showing the results.
+
+#### 3. Take an action (voice command)
+- Say: *"Send the customer an apology SMS"* or *"Add 500 loyalty points"*
+- **Expected:** A viz card animates in showing the action being taken. The action timeline updates with a timestamped entry.
+
+#### 4. Draft an email campaign (voice command)
+- Say: *"Can we send an email please?"*
+- Tilly will ask for the offer details
+- Say: *"20% off fish and chips this weekend, promo code FISH20"*
+- **Expected:** An email campaign viz card appears with:
+  - The subject line from your description
+  - An **AI-generated branded image** (this takes a few seconds)
+  - Draft status with approve/send actions
+
+#### 5. Explore more features
+- Try: *"Check stock in the prep kitchen"*, *"How are the kitchen stations?"*, *"Check today's rotas"*
+- Try: *"Draft an SMS campaign"* or *"Send a push notification"*
+- Toggle **dark/light theme** using the ☀️/🌙 button in the top bar
+- Click **Reset** to clear the session and start fresh
+
+#### 6. Verify the 3-tier detection system
+The system uses three detection methods — you can observe them in the terminal logs:
+- **Tier 1 (function_call):** Look for `[LIVE] Tool call received` in the server logs
+- **Tier 2 (speech matching):** Look for `[TIER2]` log entries when Tilly confirms actions
+- **Tier 3 (keyword fallback):** Look for `[TIER3]` entries for direct keyword matches
+
+### Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| No audio / Tilly doesn't speak | Check browser mic permissions. Use Chrome for best WebAudio support. |
+| Session disconnects after tool call | Known intermittent issue with the preview model. Click the orb to reconnect. |
+| No image in email card | Ensure your API key has pay-as-you-go billing enabled for image generation. |
+| `pnpm: command not found` | Run `corepack enable` first (requires Node.js 22+). |
+
+<br/>
+
+## Data
+
+This project uses **synthetic demo data** shaped to reflect real hospitality workflows. No private customer, financial, or production data is included. See [docs/public-data-policy.md](docs/public-data-policy.md).
+
+<br/>
+
 ## Project Background
 
-Inspired by [TillTech](https://till.tech)'s real-world hospitality operations platform. This is a new public thin-slice focused on live multimodal interaction and visible action execution.
+Inspired by [TillTech](https://till.tech)'s real-world hospitality operations platform. We've spent the last decade building a comprehensive business platform, but we realised that powerful tools are often underutilised due to UI complexity. This project rethinks the user experience entirely, positioning voice as the stepping stone into the future of business management.
+
+Tilly is actually a slice of a much deeper stack — an orchestrator-based system with field-relative experts and specific action sub-agents. For this hackathon, we wanted to showcase how you can take this conversational orchestrator approach and use it to take meaningful, complex actions within your business.
 
 See also:
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and delivery phases
