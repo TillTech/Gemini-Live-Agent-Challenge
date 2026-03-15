@@ -1060,27 +1060,31 @@ export function App() {
                                         );
                                     case 'draft_promo':
                                         return (
-                                            <div key={v.id} className={`vizCard viz-promo ${v.args.imageUrl ? 'has-image' : ''} ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms`, paddingBottom: v.args.imageUrl ? '8px' : '16px' }}>
+                                            <div key={v.id} className={`vizCard viz-promo ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
                                                 <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📣</span>
                                                     <span className="vizTitle">Campaign Builder</span>
-                                                    <span className="vizStatus">{v.args.imageUrl ? 'Ready' : 'Drafting'}</span>
+                                                    <span className="vizStatus">Staged</span>
                                                 </div>
-                                                
-                                                {v.args.imageUrl ? (
-                                                    <img src={v.args.imageUrl} alt="Campaign Draft" style={{ width: '100%', height: 'auto', borderRadius: 'var(--radius-sm)', border: '1px solid var(--glass-border)', marginTop: 4 }} />
-                                                ) : (
-                                                    <div className="promoCard">
-                                                        <div className="promoHeadline" style={{ animation: 'pulse 1.5s infinite' }}>Generating Email Layout...</div>
-                                                        <div className="promoOffer" style={{ opacity: 0.5 }}>{v.args.pct ? `${v.args.pct} OFF` : 'OFFER STAGED'}</div>
-                                                        <div className="promoMeta">
-                                                            <span className="promoTag">Campaign draft</span>
-                                                            {v.args.item && <span className="promoTag">{v.args.item}</span>}
-                                                            <span className="promoTag">In-app</span>
-                                                        </div>
+                                                <div className="promoCard">
+                                                    <div className="promoOffer" style={{ fontSize: '1.3rem', fontWeight: 700 }}>
+                                                        {v.args.pct ? `${v.args.pct} OFF` : '🔥 OFFER STAGED'}
                                                     </div>
-                                                )}
+                                                    <div className="promoHeadline" style={{ marginTop: 4, marginBottom: 8 }}>
+                                                        {v.args.campaign || v.args.item || 'Promotional Campaign'}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', lineHeight: 1.5, marginBottom: 10 }}>
+                                                        {v.args.pct
+                                                            ? `Strong value offer — ${v.args.pct} discount should drive high conversion with your customer base. Ready to push across channels.`
+                                                            : 'Campaign drafted from operational context. Ready to push to email, SMS, or in-app channels.'}
+                                                    </div>
+                                                    <div className="promoMeta">
+                                                        <span className="promoTag">Campaign Draft</span>
+                                                        {v.args.item && <span className="promoTag">{v.args.item}</span>}
+                                                        <span className="promoTag">Ready</span>
+                                                    </div>
+                                                </div>
                                             </div>
                                         );
                                     case 'send_marketing_push':

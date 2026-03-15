@@ -28,6 +28,7 @@ const liveSessionReady = isLiveConfigured();
 
 let state = createInitialSnapshot(liveReady);
 const liveEventClients = new Set<http.ServerResponse>();
+let pendingImageGen = false; // prevents double image generation across tiers
 const turnFunctionCalls = new Set<string>();
 let lastOperatorInput = '';
 
@@ -82,12 +83,13 @@ setLiveToolHandler((tool, args) => {
     if (tool === 'draft_email_campaign') {
         const prompt = args.campaign || args.subject || 'A promotional hospitality email marketing campaign';
         const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
+        pendingImageGen = true;
         generateBrandImage(imagePrompt).then((b64) => {
             if (b64) {
                 updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
                 broadcastLiveEvent({ type: 'snapshot', snapshot: state });
             }
-        }).catch(console.error);
+        }).catch(console.error).finally(() => { pendingImageGen = false; });
         return 'Email drafting started in the background. Tell the user to review the preview on screen and ask if they are happy to send it.';
     }
 
@@ -140,6 +142,9 @@ subscribeLiveEvents((event) => {
                 const hasDetail = /\d+%|\d+ percent/i.test(low) || low.split(/\s+/).length > 8;
 
                 const filteredFallback = fallback.actions.filter(a => {
+                    // Don't let the coverage layer re-add draft/dispatch actions already handled by Tier 1
+                    if (turnFunctionCalls.has(a.tool)) return false;
+                    if (a.tool.startsWith('draft_') && turnFunctionCalls.has(a.tool)) return false;
                     if (INFO_TOOLS.has(a.tool)) return true;
                     return hasConfirmation || hasDetail;
                 });
@@ -160,18 +165,19 @@ subscribeLiveEvents((event) => {
 
                 // Trigger background image generation for email drafts from Tier 2/3 paths
                 // (Tier 1 tool handler already has its own trigger)
-                if (action.tool === 'draft_email_campaign' && !turnFunctionCalls.has('draft_email_campaign')) {
+                if (action.tool === 'draft_email_campaign' && !turnFunctionCalls.has('draft_email_campaign') && !pendingImageGen) {
                     // Only generate if no image exists yet for this draft
                     const existingEmailAction = state.actions.find(a => a.domain === 'email_campaigns');
                     if (existingEmailAction?.args?.imageUrl) continue;
                     const prompt = action.args?.campaign || action.args?.subject || 'A promotional hospitality email marketing campaign';
                     const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
+                    pendingImageGen = true;
                     generateBrandImage(imagePrompt).then((b64) => {
                         if (b64) {
                             updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
                             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
                         }
-                    }).catch(console.error);
+                    }).catch(console.error).finally(() => { pendingImageGen = false; });
                 }
             }
             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
