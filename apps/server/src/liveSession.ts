@@ -9,6 +9,7 @@ type TextSessionLike = {
 
 type AudioSessionLike = {
     sendRealtimeInput(params: unknown): void;
+    sendClientContent?: (params: any) => void;
     sendToolResponse(params: unknown): void;
     close(): void;
 };
@@ -69,6 +70,14 @@ type PendingTurn = {
     timeoutId: NodeJS.Timeout;
 };
 
+type LiveWidgetPayload = {
+    tool: string;
+    title?: string;
+    summary?: string;
+    facts?: string[];
+    args?: Record<string, string>;
+};
+
 const liveSubscribers = new Set<(event: LiveStreamEvent) => void>();
 
 let textSession: TextSessionLike | null = null;
@@ -76,6 +85,47 @@ let audioSession: AudioSessionLike | null = null;
 let pendingTurn: PendingTurn | null = null;
 let latestInputTranscript = '';
 let latestOutputTranscript = '';
+let greetingQueued = false;
+let greetingSentForSession = false;
+let lastStateContext = '';
+let visibleWidgetTools: string[] = [];
+let visibleWidgetPayloads: LiveWidgetPayload[] = [];
+let lastClientWidgetSeq = 0;
+let lastClientWidgetClientId = '';
+let audioTurnStatePrimed = false;
+let latestSnapshot: Snapshot | null = null;
+let liveTranscriptHistory: Array<{ role: 'operator' | 'tilly'; text: string }> = [];
+const liveDebug = process.env.LIVE_DEBUG === '1';
+
+const TOOL_LABELS: Record<string, string> = {
+    get_ui_state: 'UI state',
+    get_operational_state: 'Operational state',
+    check_driver_status: 'Driver status',
+    send_customer_apology: 'Customer apology',
+    add_loyalty_points: 'Loyalty points',
+    check_inventory_status: 'Store stock',
+    halt_kitchen_item: 'Kitchen override',
+    draft_promo: 'Promotion draft',
+    send_marketing_push: 'Push broadcast',
+    record_attendance_note: 'Attendance note',
+    reorder_supplier_item: 'Supplier reorder',
+    optimise_driver_routes: 'Route optimiser',
+    check_distribution_status: 'Distribution status',
+    check_warehouse_stock: 'Warehouse stock',
+    check_costings: 'Costings',
+    check_wastage: 'Wastage',
+    check_kitchen_stations: 'Kitchen stations',
+    send_email_campaign: 'Email campaign',
+    send_sms_campaign: 'SMS campaign',
+    check_engagement: 'Engagement',
+    check_rotas: 'Rotas',
+    check_staff_stations: 'Staff stations',
+    check_performance: 'Performance',
+    check_payments: 'Payments',
+    generate_report: 'Report',
+    check_accounts: 'Accounts',
+    clear_ui_widgets: 'Clear UI widgets'
+};
 
 function emitLiveEvent(event: LiveStreamEvent) {
     for (const subscriber of liveSubscribers) {
@@ -123,6 +173,153 @@ function summariseState(snapshot: Snapshot) {
         .join('\n');
 }
 
+function summariseVisibleWidgets() {
+    if (visibleWidgetTools.length === 0) {
+        return 'Visible UI widgets: none.';
+    }
+
+    const labels = visibleWidgetTools.map((tool) => `${tool} (${TOOL_LABELS[tool] ?? tool})`);
+    return `Visible UI widgets: ${labels.join(', ')}.`;
+}
+
+function buildUiStateToolResult() {
+    const tools = visibleWidgetTools.length > 0 ? visibleWidgetTools.join(', ') : 'none';
+    const labels = visibleWidgetTools.length > 0
+        ? visibleWidgetTools.map((tool) => TOOL_LABELS[tool] ?? tool).join(', ')
+        : 'none';
+
+    return JSON.stringify({
+        visibleWidgetTools,
+        visibleWidgetToolNames: labels,
+        widgets: visibleWidgetPayloads,
+        summary: `Widget stage tools: ${tools}.`
+    });
+}
+
+function buildOperationalStateToolResult(args?: Record<string, unknown>) {
+    const widgetTools = Array.isArray(args?.widgetTools)
+        ? args.widgetTools.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        : [];
+    const panelIds = Array.isArray(args?.panelIds)
+        ? args.panelIds.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        : [];
+    const query = typeof args?.query === 'string' ? args.query.trim().toLowerCase() : '';
+    const includeRecentActions = args?.includeRecentActions !== false;
+
+    let widgets = visibleWidgetPayloads;
+    if (widgetTools.length > 0) {
+        const toolSet = new Set(widgetTools.map((tool) => tool.trim()));
+        widgets = widgets.filter((widget) => toolSet.has(widget.tool));
+    }
+
+    if (query.length > 0) {
+        widgets = widgets.filter((widget) => {
+            const facts = Array.isArray(widget.facts) ? widget.facts.join(' ') : '';
+            const argsText = widget.args ? Object.values(widget.args).join(' ') : '';
+            const haystack = `${widget.tool} ${widget.title ?? ''} ${widget.summary ?? ''} ${facts} ${argsText}`.toLowerCase();
+            return haystack.includes(query);
+        });
+    }
+
+    let panels: Snapshot['panels'] = [];
+    if (latestSnapshot) {
+        panels = latestSnapshot.panels.filter((panel) => panel.value !== '—' && !/awaiting data/i.test(panel.detail));
+        if (panelIds.length > 0) {
+            const idSet = new Set(panelIds.map((id) => id.trim()));
+            panels = panels.filter((panel) => idSet.has(panel.id));
+        }
+        if (query.length > 0) {
+            panels = panels.filter((panel) => {
+                const haystack = `${panel.id} ${panel.label} ${panel.value} ${panel.detail} ${panel.metric}`.toLowerCase();
+                return haystack.includes(query);
+            });
+        }
+    }
+
+    return JSON.stringify({
+        summary: latestSnapshot?.summary ?? 'Live operational state',
+        lastPrompt: latestSnapshot?.meta.lastPrompt ?? null,
+        visibleWidgetTools,
+        widgetCount: widgets.length,
+        widgets,
+        panelCount: panels.length,
+        panels: panels.map((panel) => ({
+            id: panel.id,
+            label: panel.label,
+            value: panel.value,
+            detail: panel.detail,
+            metric: panel.metric,
+            tone: panel.tone
+        })),
+        recentActions: includeRecentActions
+            ? (latestSnapshot?.actions ?? []).slice(0, 6).map((action) => ({
+                title: action.title,
+                domain: action.domain,
+                detail: action.detail
+            }))
+            : []
+    });
+}
+
+function pushLiveTranscript(role: 'operator' | 'tilly', text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) {
+        return;
+    }
+
+    const prev = liveTranscriptHistory[liveTranscriptHistory.length - 1];
+    if (prev && prev.role === role && prev.text === trimmed) {
+        return;
+    }
+
+    liveTranscriptHistory.push({ role, text: trimmed });
+}
+
+function normaliseWidgetTools(tools: string[]) {
+    return Array.from(new Set(
+        tools
+            .filter((tool): tool is string => typeof tool === 'string')
+            .map((tool) => tool.trim())
+            .filter((tool) => tool.length > 0)
+    ));
+}
+
+function normaliseWidgetPayloads(payloads: LiveWidgetPayload[] | undefined, toolOrder: string[]) {
+    if (!Array.isArray(payloads) || payloads.length === 0) {
+        return toolOrder.map((tool) => ({ tool }));
+    }
+
+    const map = new Map<string, LiveWidgetPayload>();
+    for (const payload of payloads) {
+        if (!payload || typeof payload.tool !== 'string') continue;
+        const tool = payload.tool.trim();
+        if (!tool) continue;
+        map.set(tool, {
+            tool,
+            title: typeof payload.title === 'string' ? payload.title : undefined,
+            summary: typeof payload.summary === 'string' ? payload.summary : undefined,
+            facts: Array.isArray(payload.facts) ? payload.facts.filter((f): f is string => typeof f === 'string') : undefined,
+            args: payload.args && typeof payload.args === 'object'
+                ? Object.fromEntries(Object.entries(payload.args).filter(([, v]) => typeof v === 'string')) as Record<string, string>
+                : undefined
+        });
+    }
+
+    return toolOrder.map((tool) => map.get(tool) ?? { tool });
+}
+
+function hasExplicitClearUiIntent(text: string) {
+    const t = text.toLowerCase();
+    return /\b(clear|reset|declutter|remove)\b/.test(t) && /\b(ui|widget|widgets|stage|screen)\b/.test(t);
+}
+
+function hasUiStateIntent(text: string) {
+    const t = text.toLowerCase();
+    const mentionsUiSurface = /\b(ui|screen|widget|widgets|stage|visible|showing)\b/.test(t);
+    const asksState = /\b(state|status|what|which|list|current)\b/.test(t);
+    return mentionsUiSurface && asksState;
+}
+
 function safeParsePlan(text: string): AgentPlan | null {
     const trimmed = text.trim();
     const start = trimmed.indexOf('{');
@@ -161,6 +358,77 @@ function getLiveModelName() {
 function resetAudioTurnState() {
     latestInputTranscript = '';
     latestOutputTranscript = '';
+    audioTurnStatePrimed = false;
+}
+
+function getTimeGreeting() {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+}
+
+function buildLiveStateContext(snapshot: Snapshot) {
+    const stateSummary = summariseState(snapshot);
+    const visibleWidgets = summariseVisibleWidgets();
+    const canonicalTools = visibleWidgetTools.length > 0 ? visibleWidgetTools.join(', ') : 'none';
+    const widgetPayloadJson = JSON.stringify(visibleWidgetPayloads);
+    const transcriptHistory = snapshot.transcript
+        .map((entry) => `${entry.role}: ${entry.text}`)
+        .join('\n');
+    const liveTranscript = liveTranscriptHistory
+        .map((entry) => `${entry.role}: ${entry.text}`)
+        .join('\n');
+    const recentLiveTurns = liveTranscriptHistory
+        .slice(-8)
+        .map((entry) => `${entry.role}: ${entry.text}`)
+        .join('\n');
+
+    return [
+        'STATE_SYNC (authoritative): use this as the current UI/dashboard truth for reasoning.',
+        `RECENT_LIVE_TURNS:\n${recentLiveTurns || '(empty)'}`,
+        'Prioritise RECENT_LIVE_TURNS for immediate conversational continuity.',
+        `VISIBLE_WIDGET_TOOLS_CANONICAL: ${canonicalTools}`,
+        visibleWidgets,
+        `WIDGET_STATE_PAYLOAD: ${widgetPayloadJson}`,
+        'Use WIDGET_STATE_PAYLOAD as the primary source for widget contents.',
+        'Visibility rule: only VISIBLE_WIDGET_TOOLS_CANONICAL defines what is currently visible on the widget stage.',
+        'Do not infer widget visibility from Panels, prior turns, transcript memory, or recent actions.',
+        `Panels (operational metrics, not widget visibility):\n${stateSummary}`,
+        `FULL_TRANSCRIPT_HISTORY:\n${transcriptHistory || '(empty)'}`,
+        `LIVE_TRANSCRIPT_HISTORY:\n${liveTranscript || '(empty)'}`,
+        'Use FULL_TRANSCRIPT_HISTORY for continuity. Do not quote it verbatim unless asked.',
+        'LIVE_TRANSCRIPT_HISTORY contains final operator/assistant utterances from live turns. Prefer it when recent continuity is needed.',
+        'If the operator asks what is visible on screen, answer only from VISIBLE_WIDGET_TOOLS_CANONICAL / Visible UI widgets.'
+    ].filter(Boolean).join('\n\n');
+}
+
+function maybeSendQueuedGreeting() {
+    if (!greetingQueued || greetingSentForSession) {
+        return;
+    }
+    if (!audioSession || typeof audioSession.sendClientContent !== 'function') {
+        return;
+    }
+
+    greetingQueued = false;
+    greetingSentForSession = true;
+
+    const greeting = getTimeGreeting();
+    audioSession.sendClientContent({
+        turns: [
+            {
+                role: 'user',
+                parts: [{
+                    text: [
+                        'Session opening behavior:',
+                        `Say this exact line and then wait: "${greeting}, I am Tilly. Who am I speaking with today?"`
+                    ].join('\n')
+                }]
+            }
+        ],
+        turnComplete: true
+    });
 }
 
 async function ensureTextSession() {
@@ -223,6 +491,45 @@ function handleAudioMessage(event: AudioServerMessage) {
         const responses: Array<{ id: string; name: string; response: { result: string } }> = [];
 
         for (const fc of event.toolCall.functionCalls) {
+            if (fc.name === 'get_ui_state') {
+                const explicitUiStateQuery = hasUiStateIntent(latestInputTranscript);
+                responses.push({
+                    id: fc.id,
+                    name: fc.name,
+                    response: {
+                        result: explicitUiStateQuery
+                            ? buildUiStateToolResult()
+                            : 'No explicit UI state request from the operator. Continue with the requested task.'
+                    }
+                });
+                continue;
+            }
+
+            if (fc.name === 'get_operational_state') {
+                responses.push({
+                    id: fc.id,
+                    name: fc.name,
+                    response: { result: buildOperationalStateToolResult(fc.args) }
+                });
+                continue;
+            }
+
+            if (fc.name === 'clear_ui_widgets') {
+                const explicitIntent = hasExplicitClearUiIntent(latestInputTranscript);
+                const hasWidgets = visibleWidgetTools.length > 0;
+                if (!explicitIntent || !hasWidgets) {
+                    console.log('[LIVE] Ignoring clear_ui_widgets:', !hasWidgets ? 'already clear' : 'no explicit clear intent');
+                    responses.push({
+                        id: fc.id,
+                        name: fc.name,
+                        response: {
+                            result: 'No action needed. Continue with the operator request.'
+                        }
+                    });
+                    continue;
+                }
+            }
+
             console.log('[LIVE] Executing tool:', fc.name, fc.args);
             emitLiveEvent({
                 type: 'function_call',
@@ -243,6 +550,7 @@ function handleAudioMessage(event: AudioServerMessage) {
     // Handle setup complete
     if (event.setupComplete) {
         console.log('[LIVE] Setup complete');
+        maybeSendQueuedGreeting();
         return;
     }
 
@@ -252,33 +560,43 @@ function handleAudioMessage(event: AudioServerMessage) {
     }
 
     const contentKeys = Object.keys(content as Record<string, unknown>);
-    if (!contentKeys.includes('modelTurn')) {
+    if (liveDebug && !contentKeys.includes('modelTurn')) {
         console.log('[LIVE] serverContent keys:', contentKeys.join(', '));
     }
 
     if (content.waitingForInput) {
+        audioTurnStatePrimed = false;
         emitLiveEvent({ type: 'live_status', status: 'waiting' });
     }
 
     if (content.interrupted) {
+        audioTurnStatePrimed = false;
         emitLiveEvent({ type: 'live_status', status: 'interrupted' });
     }
 
     if (content.inputTranscription?.text) {
         latestInputTranscript += content.inputTranscription.text;
+        const isFinalInput = Boolean(content.inputTranscription.finished);
+        if (isFinalInput) {
+            pushLiveTranscript('operator', latestInputTranscript);
+        }
         emitLiveEvent({
             type: 'input_transcript',
             text: latestInputTranscript,
-            final: Boolean(content.inputTranscription.finished)
+            final: isFinalInput
         });
     }
 
     if (content.outputTranscription?.text) {
         latestOutputTranscript += content.outputTranscription.text;
+        const isFinalOutput = Boolean(content.outputTranscription.finished);
+        if (isFinalOutput) {
+            pushLiveTranscript('tilly', latestOutputTranscript);
+        }
         emitLiveEvent({
             type: 'output_transcript',
             text: latestOutputTranscript,
-            final: Boolean(content.outputTranscription.finished)
+            final: isFinalOutput
         });
     }
 
@@ -302,7 +620,7 @@ function handleAudioMessage(event: AudioServerMessage) {
     if (content.turnComplete || (content as Record<string, unknown>).generationComplete) {
         const inputText = latestInputTranscript.trim();
         const outputText = latestOutputTranscript.trim();
-        console.log('[LIVE] Turn complete — input:', JSON.stringify(inputText), '| output length:', outputText.length);
+        console.log('[LIVE] Turn complete - input:', JSON.stringify(inputText), '| output:', JSON.stringify(outputText));
         emitLiveEvent({
             type: 'turn_complete',
             inputText,
@@ -313,21 +631,18 @@ function handleAudioMessage(event: AudioServerMessage) {
     }
 }
 
-let lastCloseTime = 0;
+export async function startLiveAudioSession(options?: { greet?: boolean }) {
+    if (options?.greet) {
+        greetingQueued = true;
+    }
 
-export async function startLiveAudioSession() {
     if (audioSession) {
+        maybeSendQueuedGreeting();
         return audioSession;
     }
 
-    // Cooldown: don't reconnect within 5 seconds of last close
-    const timeSinceClose = Date.now() - lastCloseTime;
-    if (lastCloseTime > 0 && timeSinceClose < 5000) {
-        return null;
-    }
-
     if (!isLiveConfigured()) {
-        console.log('[LIVE] Not configured — API key missing.');
+        console.log('[LIVE] Not configured - API key missing.');
         return null;
     }
 
@@ -349,16 +664,53 @@ export async function startLiveAudioSession() {
                 }
             },
             systemInstruction: [
-                'You are Tilly, the live operations agent for TillTech — a hospitality technology platform that powers restaurants, takeaways, and retail businesses. You have full visibility across drivers, inventory, kitchen, marketing, staffing, and logistics.',
+                'You are Tilly, the live operations agent for TillTech - a hospitality technology platform that powers restaurants, takeaways, and retail businesses. You have full visibility across drivers, inventory, kitchen, marketing, staffing, and logistics.',
                 'You are speaking to a restaurant operator through a live voice interface. Be confident, calm, concise, and operational. You sound like a competent shift manager, not a chatbot.',
+                'You will receive STATE_SYNC context messages during the session. Treat the most recent STATE_SYNC as authoritative current state.',
+                'Maintain continuity across turns by using transcript history and current operator intent before starting a new topic.',
+                'Do not mention widget stage or UI visibility unless the operator explicitly asks about UI/screen/widget state.',
+                'When the operator does ask for UI/screen/widget state, call get_ui_state first and answer strictly from that tool result.',
+                'For factual operational details (counts, stock levels, delays, KPIs), call get_operational_state and use it as source of truth.',
+                'Do not invent figures. If data is missing from get_operational_state, say that clearly.',
+                'When asked what is on screen or which widgets are visible, report it from the latest "Visible UI widgets" state. Never say you cannot track UI/screen/widget state.',
+                'For UI state questions, list exactly the currently visible widgets from state and do not add inferred items.',
+                'Only mention that the stage is clear if the operator explicitly asks about current UI/widget visibility.',
                 'IMPORTANT BEHAVIOUR: When the operator asks you to take an action, gather the necessary details FIRST through natural conversation before calling the tool. For example, if they say "send a push notification", ask WHO it should go to, WHAT the offer is, and WHEN it should go out. If they say "halt a kitchen item", confirm WHICH item. Only call the tool once you have enough information. This makes the interaction feel professional and thorough.',
-                'When you DO call a tool, briefly tell the operator what you are doing — for example "OK, I am checking driver status now" or "Sending that apology SMS to the customer on order 4217". After the tool runs, confirm the result with specifics.',
+                'When you DO call a tool, briefly tell the operator what you are doing - for example "OK, I am checking driver status now" or "Sending that apology SMS to the customer on order 4217". After the tool runs, confirm the result with specifics.',
+                'Never call clear_ui_widgets unless the operator explicitly asks to clear, reset, declutter, or remove widgets/screen. Otherwise, keep existing widgets and append or update only what is needed.',
                 'You have access to these operational domains: Drivers and delivery tracking. Inventory and stock monitoring in the prep kitchen. Kitchen flow control including halting items. Customer communications including SMS apologies and loyalty point credits. Marketing campaigns including drafting promos and sending push notifications to app users. Staff attendance tracking. Delivery route optimisation.',
-                'Current shift state: 4 evening drivers are clocked in. Driver 2 is running 15 minutes behind due to traffic on the A46. Fresh dough is at 20 portions which is below the Friday night safety threshold. The kitchen is nominal with nothing blocked. Marketing has no active campaigns. There is 1 lateness flag — Sarah was 15 minutes late for her shift. Logistics are on default route planning.',
                 'Keep spoken responses short enough for a live demo under 4 minutes. Do not ramble. Be decisive and operational.'
             ].join('\n'),
             tools: [{
                 functionDeclarations: [
+                    { name: 'get_ui_state', description: 'Return the exact list of currently visible UI widgets from server state.' },
+                    {
+                        name: 'get_operational_state',
+                        description: 'Return current operational state from synced widget data and live server state.',
+                        parameters: {
+                            type: 'OBJECT',
+                            properties: {
+                                widgetTools: {
+                                    type: 'ARRAY',
+                                    description: 'Optional widget tool ids to filter (e.g. check_inventory_status).',
+                                    items: { type: 'STRING' }
+                                },
+                                panelIds: {
+                                    type: 'ARRAY',
+                                    description: 'Optional panel IDs to return exactly (e.g. store_stock, delivery_drivers).',
+                                    items: { type: 'STRING' }
+                                },
+                                query: {
+                                    type: 'STRING',
+                                    description: 'Optional keyword filter across panel id/label/value/detail/metric.'
+                                },
+                                includeRecentActions: {
+                                    type: 'BOOLEAN',
+                                    description: 'Include recent action timeline entries. Defaults true.'
+                                }
+                            }
+                        }
+                    },
                     { name: 'check_driver_status', description: 'Check the status of all drivers, their shifts, delays, and delivery ETAs.' },
                     { name: 'send_customer_apology', description: 'Send an automated SMS apology to a customer about a delayed delivery.', parameters: { type: 'OBJECT', properties: { reason: { type: 'STRING', description: 'Reason for the apology' } } } },
                     { name: 'add_loyalty_points', description: 'Add loyalty compensation points to a customer app wallet.', parameters: { type: 'OBJECT', properties: { points: { type: 'NUMBER', description: 'Number of points to add' } } } },
@@ -369,20 +721,21 @@ export async function startLiveAudioSession() {
                     { name: 'record_attendance_note', description: 'Record a staff attendance exception such as lateness.', parameters: { type: 'OBJECT', properties: { staff: { type: 'STRING', description: 'Staff member name' }, note: { type: 'STRING', description: 'Attendance note' } } } },
                     { name: 'reorder_supplier_item', description: 'Place a reorder with the primary supplier for a low-stock item.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Item to reorder' } } } },
                     { name: 'optimise_driver_routes', description: 'Optimise active delivery routes based on current traffic conditions.' },
-                    { name: 'check_distribution_status', description: 'Check status of distribution fleet — warehouse-to-store transfers, central kitchen dispatches.' },
+                    { name: 'check_distribution_status', description: 'Check status of distribution fleet - warehouse-to-store transfers, central kitchen dispatches.' },
                     { name: 'check_warehouse_stock', description: 'Check warehouse and central kitchen bulk stock levels.' },
                     { name: 'check_costings', description: 'Check cost per dish, food cost breakdowns, margins.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Menu item to check costing for' } } } },
                     { name: 'check_wastage', description: 'Check food wastage reports and waste tracking data.' },
-                    { name: 'check_kitchen_stations', description: 'Check kitchen station assignments — grill, fryer, expediting, line positions.' },
+                    { name: 'check_kitchen_stations', description: 'Check kitchen station assignments - grill, fryer, expediting, line positions.' },
                     { name: 'send_email_campaign', description: 'Create and send a branded email campaign to mailing list.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Email subject/campaign name' } } } },
                     { name: 'send_sms_campaign', description: 'Create and send an SMS text campaign to customers.', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'SMS campaign message' } } } },
-                    { name: 'check_engagement', description: 'Check in-app engagement games status — plays, prizes, participation.' },
+                    { name: 'check_engagement', description: 'Check in-app engagement games status - plays, prizes, participation.' },
                     { name: 'check_rotas', description: 'Check staff rotas, shift schedules, and coverage gaps.' },
                     { name: 'check_staff_stations', description: 'Check staff station assignments across kitchen, warehouse, and management areas.' },
                     { name: 'check_performance', description: 'Check staff performance metrics, leagues, KPIs, and training progress.', parameters: { type: 'OBJECT', properties: { staff: { type: 'STRING', description: 'Staff member name' } } } },
                     { name: 'check_payments', description: 'Check payment provider status, transaction count, settlement data.' },
-                    { name: 'generate_report', description: 'Generate an operational report — sales, stock, performance, payments.', parameters: { type: 'OBJECT', properties: { type: { type: 'STRING', description: 'Type of report to generate' } } } },
-                    { name: 'check_accounts', description: 'Check accounting overview — VAT returns, invoices, outstanding bills.' }
+                    { name: 'generate_report', description: 'Generate an operational report - sales, stock, performance, payments.', parameters: { type: 'OBJECT', properties: { type: { type: 'STRING', description: 'Type of report to generate' } } } },
+                    { name: 'check_accounts', description: 'Check accounting overview - VAT returns, invoices, outstanding bills.' },
+                    { name: 'clear_ui_widgets', description: 'Clear widgets from the current UI stage before showing a fresh set.' }
                 ]
             }]
         },
@@ -390,23 +743,31 @@ export async function startLiveAudioSession() {
             onopen: () => {
                 console.log('[LIVE] Audio session CONNECTED');
                 emitLiveEvent({ type: 'live_status', status: 'connected' });
+                maybeSendQueuedGreeting();
             },
             onmessage: (event: AudioServerMessage) => {
-                const keys = Object.keys(event as Record<string, unknown>);
-                console.log('[LIVE] Message keys:', keys.join(', '), '| preview:', JSON.stringify(event).substring(0, 300));
+                if (liveDebug) {
+                    const keys = Object.keys(event as Record<string, unknown>);
+                    console.log('[LIVE] Message keys:', keys.join(', '), '| preview:', JSON.stringify(event).substring(0, 300));
+                }
                 handleAudioMessage(event);
             },
             onclose: () => {
                 console.log('[LIVE] Audio session CLOSED');
                 audioSession = null;
-                lastCloseTime = Date.now();
                 resetAudioTurnState();
+                greetingSentForSession = false;
+                greetingQueued = false;
+                lastStateContext = '';
                 emitLiveEvent({ type: 'live_status', status: 'disconnected' });
             },
             onerror: (error: unknown) => {
                 console.error('[LIVE] Audio session ERROR:', error);
                 audioSession = null;
                 resetAudioTurnState();
+                greetingSentForSession = false;
+                greetingQueued = false;
+                lastStateContext = '';
                 emitLiveEvent({
                     type: 'live_error',
                     message: error instanceof Error ? error.message : 'Live audio session failed.'
@@ -418,12 +779,134 @@ export async function startLiveAudioSession() {
     return audioSession;
 }
 
-export async function sendLiveAudioChunk(audioBase64: string, mimeType: string) {
+export function requestLiveGreeting() {
+    greetingQueued = true;
+    maybeSendQueuedGreeting();
+}
+
+export function updateLiveVisibleWidgets(tools: string[], seq?: number, clientId?: string, payloads?: LiveWidgetPayload[]) {
+    if (typeof clientId === 'string' && clientId.trim().length > 0 && clientId !== lastClientWidgetClientId) {
+        lastClientWidgetClientId = clientId;
+        lastClientWidgetSeq = 0;
+    }
+
+    if (typeof seq === 'number' && Number.isFinite(seq)) {
+        if (seq < lastClientWidgetSeq) {
+            return;
+        }
+        lastClientWidgetSeq = seq;
+    }
+
+    const next = normaliseWidgetTools(tools);
+    const nextPayloads = normaliseWidgetPayloads(payloads, next);
+
+    const toolsUnchanged = next.length === visibleWidgetTools.length && next.every((tool, index) => tool === visibleWidgetTools[index]);
+    const payloadsUnchanged = nextPayloads.length === visibleWidgetPayloads.length
+        && nextPayloads.every((payload, index) => JSON.stringify(payload) === JSON.stringify(visibleWidgetPayloads[index]));
+
+    if (toolsUnchanged && payloadsUnchanged) {
+        return;
+    }
+
+    visibleWidgetTools = next;
+    visibleWidgetPayloads = nextPayloads;
+    // Force next state sync to include updated widget stage.
+    lastStateContext = '';
+}
+
+export function applyLiveWidgetTool(tool: string) {
+    if (!tool) {
+        return;
+    }
+
+    const nextTools = [...visibleWidgetTools];
+    if (tool === 'clear_ui_widgets') {
+        if (nextTools.length === 0) {
+            return;
+        }
+        visibleWidgetTools = [];
+        visibleWidgetPayloads = [];
+        lastStateContext = '';
+        return;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(TOOL_LABELS, tool)) {
+        return;
+    }
+
+    // Source of truth for "what is visible" is the client widget stage.
+    // Avoid re-opening read-only check widgets from backend actions.
+    if (tool.startsWith('check_') && !nextTools.includes(tool)) {
+        return;
+    }
+
+    if (!nextTools.includes(tool)) {
+        nextTools.push(tool);
+        visibleWidgetTools = normaliseWidgetTools(nextTools);
+        visibleWidgetPayloads = normaliseWidgetPayloads(visibleWidgetPayloads, visibleWidgetTools);
+        lastStateContext = '';
+    }
+}
+
+export function hasLiveVisibleWidgets() {
+    return visibleWidgetTools.length > 0;
+}
+
+export function clearLiveVisibleWidgets() {
+    if (visibleWidgetTools.length === 0) {
+        lastClientWidgetSeq = 0;
+        lastClientWidgetClientId = '';
+        visibleWidgetPayloads = [];
+        return;
+    }
+    visibleWidgetTools = [];
+    visibleWidgetPayloads = [];
+    lastClientWidgetSeq = 0;
+    lastClientWidgetClientId = '';
+    lastStateContext = '';
+}
+
+export function resetLiveTranscriptHistory() {
+    liveTranscriptHistory = [];
+    lastStateContext = '';
+}
+
+export function syncLiveAudioState(snapshot: Snapshot, force = false) {
+    if (!audioSession || typeof audioSession.sendClientContent !== 'function') {
+        return;
+    }
+
+    latestSnapshot = snapshot;
+    const context = buildLiveStateContext(snapshot);
+    if (!force && context === lastStateContext) {
+        return;
+    }
+
+    lastStateContext = context;
+    audioSession.sendClientContent({
+        turns: [
+            {
+                role: 'user',
+                parts: [{ text: context }]
+            }
+        ],
+        turnComplete: false
+    });
+}
+
+export async function sendLiveAudioChunk(audioBase64: string, mimeType: string, snapshot?: Snapshot) {
     const activeSession = await startLiveAudioSession();
 
     if (!activeSession) {
-        // Session already torn down — silently drop buffered chunks
+        // Session already torn down - silently drop buffered chunks
         return;
+    }
+
+    // Prime each incoming audio turn with latest UI/dashboard context
+    // before forwarding the first chunk to the model.
+    if (snapshot && !audioTurnStatePrimed) {
+        syncLiveAudioState(snapshot, true);
+        audioTurnStatePrimed = true;
     }
 
     activeSession.sendRealtimeInput({
@@ -434,6 +917,31 @@ export async function sendLiveAudioChunk(audioBase64: string, mimeType: string) 
     });
 
     emitLiveEvent({ type: 'live_status', status: 'capturing' });
+}
+
+export async function sendLiveTextInput(text: string, snapshot: Snapshot): Promise<boolean> {
+    const prompt = text.trim();
+    if (!prompt) {
+        return false;
+    }
+
+    const activeSession = await startLiveAudioSession({ greet: false });
+
+    if (!activeSession) {
+        return false;
+    }
+
+    syncLiveAudioState(snapshot, true);
+
+    // Keep turn-complete fallback logic aligned with typed input.
+    latestInputTranscript = prompt;
+    latestOutputTranscript = '';
+    pushLiveTranscript('operator', prompt);
+    emitLiveEvent({ type: 'input_transcript', text: prompt, final: true });
+    emitLiveEvent({ type: 'live_status', status: 'waiting' });
+    // Keep typed input equivalent to live voice path by using realtime input.
+    activeSession.sendRealtimeInput({ text: prompt });
+    return true;
 }
 
 export async function planWithLiveSession(prompt: string, snapshot: Snapshot): Promise<AgentPlan | null> {
@@ -448,9 +956,11 @@ export async function planWithLiveSession(prompt: string, snapshot: Snapshot): P
 
     const transcript = snapshot.transcript.map((entry) => `${entry.role}: ${entry.text}`).join('\n');
     const stateSummary = summariseState(snapshot);
+    const visibleWidgets = summariseVisibleWidgets();
     const requestText = [
-        'Available tools: check_driver_status, send_customer_apology, add_loyalty_points, check_inventory_status, halt_kitchen_item, draft_promo, send_marketing_push, record_attendance_note, reorder_supplier_item, optimise_driver_routes.',
+        'Available tools: check_driver_status, send_customer_apology, add_loyalty_points, check_inventory_status, halt_kitchen_item, draft_promo, send_marketing_push, record_attendance_note, reorder_supplier_item, optimise_driver_routes, clear_ui_widgets.',
         `Current state:\n${stateSummary}`,
+        visibleWidgets,
         `Transcript so far:\n${transcript}`,
         `Operator prompt:\n${prompt}`,
         'Return JSON only with shape {"summary": string, "spoken": string, "nextSuggestion": string, "actions": [{"tool": string, "args": object?}]}. Use 0 to 4 actions.'
@@ -487,6 +997,7 @@ export async function stopLiveAudioInput() {
     }
 
     audioSession.sendRealtimeInput({ audioStreamEnd: true });
+    audioTurnStatePrimed = false;
     emitLiveEvent({ type: 'live_status', status: 'processing' });
 }
 
@@ -502,5 +1013,9 @@ export function closeLiveSession() {
     }
 
     resetAudioTurnState();
+    audioTurnStatePrimed = false;
+    greetingQueued = false;
+    greetingSentForSession = false;
+    lastStateContext = '';
     emitLiveEvent({ type: 'live_status', status: 'disconnected' });
 }

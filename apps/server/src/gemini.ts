@@ -93,7 +93,7 @@ export async function planWithGemini(prompt: string, snapshot: Snapshot): Promis
         'You are Tilly, a calm hospitality operations agent.',
         'You are helping an operator through one continuous live shift conversation.',
         'Return valid JSON only.',
-        'Pick only from these tools: check_driver_status, send_customer_apology, add_loyalty_points, check_inventory_status, halt_kitchen_item, draft_promo, send_marketing_push, record_attendance_note, reorder_supplier_item, optimise_driver_routes.',
+        'Pick only from these tools: check_driver_status, send_customer_apology, add_loyalty_points, check_inventory_status, halt_kitchen_item, draft_promo, send_marketing_push, record_attendance_note, reorder_supplier_item, optimise_driver_routes, clear_ui_widgets.',
         'Use 0 to 4 actions, keep them concrete, and preserve continuity from previous turns.',
         'The spoken field must sound like a live verbal response, not a changelog.'
     ].join(' ');

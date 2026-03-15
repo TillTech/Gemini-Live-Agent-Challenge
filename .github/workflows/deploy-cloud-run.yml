@@ -1,0 +1,117 @@
+name: Deploy Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - apps/server/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/deploy-cloud-run.yml
+  workflow_dispatch:
+
+concurrency:
+  group: cloud-run-deploy-main
+  cancel-in-progress: true
+
+env:
+  SERVICE: tilly-live-ops
+  REGION: europe-west2
+  REPOSITORY: tilly-live-ops
+  IMAGE: server
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure project
+        run: gcloud config set project "${{ secrets.GCP_PROJECT_ID }}"
+
+      - name: Ensure Artifact Registry repository exists
+        run: |
+          gcloud artifacts repositories describe "$REPOSITORY" --location "$REGION" >/dev/null 2>&1 || \
+          gcloud artifacts repositories create "$REPOSITORY" \
+            --repository-format=docker \
+            --location="$REGION" \
+            --description="Container images for Tilly Live Ops"
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          IMAGE_URI="${REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${REPOSITORY}/${IMAGE}:${GITHUB_SHA}"
+          docker build -f apps/server/Dockerfile -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Deploy service
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE_URI" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }},GOOGLE_CLOUD_PROJECT=${{ secrets.GCP_PROJECT_ID }},GOOGLE_CLOUD_REGION=${{ env.REGION }},GEMINI_LIVE_MODEL=gemini-2.5-flash-native-audio-preview-12-2025,GEMINI_MODEL=gemini-3-flash-preview"
+
+      - name: Capture service URL
+        id: service_url
+        run: |
+          SERVICE_URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')"
+          echo "service_url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
+          echo "Cloud Run URL: $SERVICE_URL"
+
+      - name: Upsert VITE_API_BASE_URL repository variable
+        uses: actions/github-script@v7
+        env:
+          SERVICE_URL: ${{ steps.service_url.outputs.service_url }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const name = 'VITE_API_BASE_URL';
+            const value = process.env.SERVICE_URL;
+
+            if (!value) {
+              core.setFailed('SERVICE_URL is empty.');
+              return;
+            }
+
+            try {
+              await github.request('PATCH /repos/{owner}/{repo}/actions/variables/{name}', {
+                owner,
+                repo,
+                name,
+                value
+              });
+              core.info(`Updated variable ${name}=${value}`);
+            } catch (error) {
+              if (error.status === 404) {
+                await github.request('POST /repos/{owner}/{repo}/actions/variables', {
+                  owner,
+                  repo,
+                  name,
+                  value
+                });
+                core.info(`Created variable ${name}=${value}`);
+              } else {
+                throw error;
+              }
+            }

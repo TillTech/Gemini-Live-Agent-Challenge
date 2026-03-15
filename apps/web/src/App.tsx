@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 declare global {
     interface Window {
@@ -38,9 +38,10 @@ type LiveStreamEvent =
     | { type: 'snapshot'; snapshot: Snapshot };
 
 type AudioChunk = { data: string; mimeType: string };
+type WidgetStatePayload = { tool: string; title: string; summary: string; facts: string[]; args: Record<string, string> };
 
 const API = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787';
-const FLUSH_SAMPLES = 4096;
+const FLUSH_SAMPLES = 2048;
 
 
 
@@ -152,7 +153,6 @@ export function App() {
     const [cfg, setCfg] = useState<ConfigResponse>(fallbackCfg);
     const [status, setStatus] = useState<'connect' | 'ok' | 'busy' | 'off'>('connect');
     const [prompt, setPrompt] = useState('');
-    const [mode, setMode] = useState<'auto' | 'mock' | 'gemini' | 'live'>('mock');
     const [err, setErr] = useState('');
     const [listening, setListening] = useState(false);
     const [interim, setInterim] = useState('');
@@ -161,6 +161,7 @@ export function App() {
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
     const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('tilly-theme') as 'dark' | 'light') ?? 'dark');
     const [activeViz, setActiveViz] = useState<{id: string; tool: string; ts: number; args: Record<string, string>}[]>([]);
+    const [showComposer, setShowComposer] = useState(false);
     const seenActionIds = useRef<Set<string>>(new Set());
 
     // Live state
@@ -185,10 +186,194 @@ export function App() {
     const playCtxRef = useRef<AudioContext | null>(null);
     const playNextTimeRef = useRef(0);
     const playingRef = useRef(false);
+    const scheduledSourcesRef = useRef(0);
     const speakEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const micSinkRef = useRef<GainNode | null>(null);
     const railScrollRef = useRef<HTMLDivElement | null>(null);
+    const promptInputRef = useRef<HTMLInputElement | null>(null);
     const prevSnapRef = useRef<Snapshot>(fallbackSnap);
     const stoppedRef = useRef(false);
+    const widgetSyncSeqRef = useRef(0);
+    const widgetSyncClientIdRef = useRef(`client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+    const dismissedCheckToolsRef = useRef<Set<string>>(new Set());
+    const esReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const esManualCloseRef = useRef(false);
+
+    const domainToolMap: Record<string, string> = {
+        delivery_drivers: 'check_driver_status', customer_comms: 'send_customer_apology',
+        loyalty: 'add_loyalty_points', store_stock: 'check_inventory_status',
+        kitchen_flow: 'halt_kitchen_item', promotions: 'draft_promo',
+        attendance: 'record_attendance_note', logistics: 'optimise_driver_routes',
+        push_notifications: 'send_marketing_push', supplier_orders: 'reorder_supplier_item',
+        distribution: 'check_distribution_status', warehouse_stock: 'check_warehouse_stock',
+        costings: 'check_costings', wastage: 'check_wastage',
+        kitchen_stations: 'check_kitchen_stations', email_campaigns: 'send_email_campaign',
+        sms_campaigns: 'send_sms_campaign', engagement: 'check_engagement',
+        rotas: 'check_rotas', staff_stations: 'check_staff_stations',
+        performance: 'check_performance', payments: 'check_payments',
+        reports: 'generate_report', accounts: 'check_accounts',
+    };
+
+    function resolveActionTool(action: ActionItem) {
+        const t = action.title.toLowerCase();
+        if (t.includes('push') || t.includes('qr')) return 'send_marketing_push';
+        if (t.includes('reorder') || t.includes('supplier')) return 'reorder_supplier_item';
+        if (t.includes('route') || t.includes('optimi')) return 'optimise_driver_routes';
+        if (t.includes('email campaign')) return 'send_email_campaign';
+        if (t.includes('sms campaign')) return 'send_sms_campaign';
+        if (t.includes('report')) return 'generate_report';
+        if (t.includes('distribution')) return 'check_distribution_status';
+        if (t.includes('warehouse')) return 'check_warehouse_stock';
+        if (t.includes('costing')) return 'check_costings';
+        if (t.includes('wastage')) return 'check_wastage';
+        if (t.includes('kitchen station')) return 'check_kitchen_stations';
+        if (t.includes('engagement') || t.includes('game')) return 'check_engagement';
+        if (t.includes('rota') || t.includes('schedule')) return 'check_rotas';
+        if (t.includes('staff station')) return 'check_staff_stations';
+        if (t.includes('performance')) return 'check_performance';
+        if (t.includes('payment')) return 'check_payments';
+        if (t.includes('account')) return 'check_accounts';
+        if (t.includes('clear') || t.includes('widget')) return 'clear_ui_widgets';
+        return domainToolMap[action.domain] ?? '';
+    }
+
+    function isCheckTool(tool: string) {
+        return tool.startsWith('check_');
+    }
+
+    function buildWidgetStatePayload(tool: string, args: Record<string, string>): WidgetStatePayload {
+        switch (tool) {
+            case 'check_driver_status':
+                return {
+                    tool,
+                    title: 'Driver Status Scan',
+                    summary: '4 drivers tracked, 1 delayed route.',
+                    facts: [
+                        'Marcus K. on Route A - on time',
+                        'Jade W. on Route B - 15 minutes delayed',
+                        'Tom H. on Route C - on time',
+                        'Priya S. on Route D - on time'
+                    ],
+                    args
+                };
+            case 'check_inventory_status':
+                return {
+                    tool,
+                    title: 'Stock Level Scan',
+                    summary: 'Fresh Dough is below threshold at 20 portions.',
+                    facts: [
+                        'Fresh Dough: 20 portions (critical)',
+                        'Cheese: 8.2 kg',
+                        'Pepperoni: 4.8 kg',
+                        'Dark Beans: 3 bags',
+                        'Paper Roll: 6 rolls'
+                    ],
+                    args
+                };
+            case 'halt_kitchen_item':
+                return {
+                    tool,
+                    title: 'Kitchen Override',
+                    summary: `${args.item || 'Menu item'} prep halted.`,
+                    facts: [args.detail || `${args.item || 'Menu item'} paused to protect throughput.`],
+                    args
+                };
+            default: {
+                const entries = Object.entries(args).filter(([, value]) => Boolean(value));
+                return {
+                    tool,
+                    title: tool,
+                    summary: entries.length > 0 ? entries.map(([k, v]) => `${k}: ${v}`).join(' | ') : 'Widget visible',
+                    facts: entries.map(([k, v]) => `${k}: ${v}`),
+                    args
+                };
+            }
+        }
+    }
+
+    function buildVisibleWidgetPayload(items = activeViz) {
+        return items.map((viz) => buildWidgetStatePayload(viz.tool, viz.args));
+    }
+
+    async function syncVisibleWidgets(items = activeViz) {
+        const tools = items.map((viz) => viz.tool);
+        const widgets = buildVisibleWidgetPayload(items);
+        widgetSyncSeqRef.current += 1;
+        const seq = widgetSyncSeqRef.current;
+        try {
+            await fetch(`${API}/api/live/ui/widgets`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tools, widgets, seq, clientId: widgetSyncClientIdRef.current })
+            });
+        } catch {
+            // Best-effort sync; next state update will retry.
+        }
+        return seq;
+    }
+
+    function upsertVizCard(
+        tool: string,
+        args: Record<string, string> = {},
+        options?: { reorder?: boolean; allowResurrectDismissedCheck?: boolean }
+    ) {
+        if (!tool) return;
+        const id = `viz-${tool}`;
+        if (
+            isCheckTool(tool) &&
+            options?.allowResurrectDismissedCheck === false &&
+            dismissedCheckToolsRef.current.has(tool)
+        ) {
+            return;
+        }
+
+        setActiveViz(prev => {
+            const existing = prev.find(v => v.tool === tool);
+            if (existing) {
+                if (options?.reorder === false) {
+                    return prev.map(v => (v.tool === tool ? { ...v, args } : v));
+                }
+                return [{ ...existing, args, ts: Date.now() }, ...prev.filter(v => v.tool !== tool)].slice(0, 12);
+            }
+            return [{ id, tool, ts: Date.now(), args }, ...prev].slice(0, 12);
+        });
+    }
+
+    function removeVizTool(tool: string) {
+        if (isCheckTool(tool)) {
+            dismissedCheckToolsRef.current.add(tool);
+        }
+        setActiveViz(prev => prev.filter(v => v.tool !== tool));
+    }
+
+    function replayVizForAction(action: ActionItem) {
+        const tool = resolveActionTool(action);
+        if (tool === 'clear_ui_widgets') {
+            setActiveViz([]);
+            return;
+        }
+        if (isCheckTool(tool)) {
+            dismissedCheckToolsRef.current.delete(tool);
+        }
+        upsertVizCard(tool, (action as any).args ?? {});
+    }
+
+    function replayVizForPanel(panelId: string) {
+        const tool = domainToolMap[panelId] ?? '';
+        if (!tool) return;
+        setActiveViz(prev => {
+            if (prev.some(v => v.tool === tool)) {
+                if (isCheckTool(tool)) {
+                    dismissedCheckToolsRef.current.add(tool);
+                }
+                return prev.filter(v => v.tool !== tool);
+            }
+            if (isCheckTool(tool)) {
+                dismissedCheckToolsRef.current.delete(tool);
+            }
+            return [{ id: `viz-${tool}`, tool, ts: Date.now(), args: {} }, ...prev].slice(0, 12);
+        });
+    }
 
     // ── Theme init ──
     useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -201,7 +386,6 @@ export function App() {
         ]).then(([c, s]) => {
             const config = c as ConfigResponse;
             setCfg(config);
-            setMode('live');
             setSnap(s as Snapshot);
             setStatus('ok');
         }).catch(() => { setStatus('off'); setErr('Backend offline. Start the server and refresh.'); });
@@ -235,87 +419,133 @@ export function App() {
         railScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     }, [snap.actions]);
 
-    // Auto-clear old viz cards
+    // Keep server aware of exactly which stage widgets are visible.
     useEffect(() => {
-        if (activeViz.length === 0) return;
-        const timer = setTimeout(() => {
-            const now = Date.now();
-            setActiveViz(prev => prev.filter(v => now - v.ts < 8000));
-        }, 8000);
-        return () => clearTimeout(timer);
+        void syncVisibleWidgets(activeViz);
     }, [activeViz]);
+
+    // Resync widget stage when live session becomes ready in case server restarted
+    // while widgets were already on screen and no add/remove happened yet.
+    useEffect(() => {
+        if (liveState !== 'connected' && liveState !== 'waiting') {
+            return;
+        }
+        void syncVisibleWidgets();
+    }, [liveState]);
 
     // ── SSE ──
     function openES() {
         if (esRef.current) return;
+        esManualCloseRef.current = false;
         const es = new EventSource(`${API}/api/live/events`);
+        es.onopen = () => {
+            if (esReconnectTimerRef.current) {
+                clearTimeout(esReconnectTimerRef.current);
+                esReconnectTimerRef.current = null;
+            }
+        };
         es.onmessage = (ev) => {
             const p = JSON.parse(ev.data) as LiveStreamEvent;
             if (p.type === 'live_status') {
                 setLiveState(p.status);
                 if (p.status === 'speaking') setSpeaking(true);
-                if (p.status === 'disconnected') setSpeaking(false);
+                if (p.status === 'disconnected') {
+                    drainAudioQ();
+                    setSpeaking(false);
+                }
+                if (p.status === 'interrupted') {
+                    // Gemini interrupted prior output: clear any queued/scheduled playback from old turn.
+                    drainAudioQ();
+                    setSpeaking(false);
+                }
+                if (p.status === 'waiting') {
+                    setLiveIn('');
+                    setInterim('');
+                }
             }
-            else if (p.type === 'input_transcript') { if (p.final) { setLiveIn(p.text); setInterim(''); setLiveTx(prev => [...prev, { id: `i${Date.now()}`, role: 'operator', text: p.text }]); } else { setInterim(p.text); } }
+            else if (p.type === 'input_transcript') {
+                if (p.final) {
+                    // New operator turn started: drop any stale output chunks from the previous reply.
+                    if (scheduledSourcesRef.current > 0 || qRef.current.length > 0 || playingRef.current) {
+                        drainAudioQ();
+                    }
+                    setLiveIn(p.text);
+                    setInterim('');
+                    setLiveTx(prev => [...prev, { id: `i${Date.now()}`, role: 'operator', text: p.text }]);
+                } else {
+                    setInterim(p.text);
+                }
+            }
             else if (p.type === 'output_transcript') { setLiveOut(p.text); if (p.final) { setLiveTx(prev => [...prev, { id: `o${Date.now()}`, role: 'tilly', text: p.text }]); } }
             else if (p.type === 'output_text') setLiveOut(cur => p.text.length > cur.length ? p.text : cur);
             else if (p.type === 'model_audio') { qRef.current.push({ data: p.data, mimeType: p.mimeType }); playQ(); }
             else if (p.type === 'turn_complete') {
                 if (p.inputText) setLiveTx(prev => [...prev, { id: `i${Date.now()}`, role: 'operator', text: p.inputText }]);
                 if (p.outputText) setLiveTx(prev => [...prev, { id: `o${Date.now()}`, role: 'tilly', text: p.outputText }]);
+                setLiveIn('');
+                setInterim('');
+                setLiveState('waiting');
             }
             else if (p.type === 'live_error') { setErr(p.message); setLiveState('disconnected'); }
             else if (p.type === 'snapshot') {
                 // Detect new actions for viz
-                const newActions = p.snapshot.actions.filter(a => !seenActionIds.current.has(a.id));
+                // Snapshot actions are newest-first; replay oldest->newest for deterministic widget state.
+                const newActions = p.snapshot.actions.filter(a => !seenActionIds.current.has(a.id)).reverse();
                 for (const a of newActions) {
                     seenActionIds.current.add(a.id);
-                    // Map action to tool via title then domain
-                    let tool = '';
-                    const t = a.title.toLowerCase();
-                    if (t.includes('push') || t.includes('qr')) tool = 'send_marketing_push';
-                    else if (t.includes('reorder') || t.includes('supplier')) tool = 'reorder_supplier_item';
-                    else if (t.includes('route') || t.includes('optimi')) tool = 'optimise_driver_routes';
-                    else if (t.includes('email campaign')) tool = 'send_email_campaign';
-                    else if (t.includes('sms campaign')) tool = 'send_sms_campaign';
-                    else if (t.includes('report')) tool = 'generate_report';
-                    else if (t.includes('distribution')) tool = 'check_distribution_status';
-                    else if (t.includes('warehouse')) tool = 'check_warehouse_stock';
-                    else if (t.includes('costing')) tool = 'check_costings';
-                    else if (t.includes('wastage')) tool = 'check_wastage';
-                    else if (t.includes('kitchen station')) tool = 'check_kitchen_stations';
-                    else if (t.includes('engagement') || t.includes('game')) tool = 'check_engagement';
-                    else if (t.includes('rota') || t.includes('schedule')) tool = 'check_rotas';
-                    else if (t.includes('staff station')) tool = 'check_staff_stations';
-                    else if (t.includes('performance')) tool = 'check_performance';
-                    else if (t.includes('payment')) tool = 'check_payments';
-                    else if (t.includes('account')) tool = 'check_accounts';
-                    else {
-                        const domainMap: Record<string, string> = {
-                            delivery_drivers: 'check_driver_status', customer_comms: 'send_customer_apology',
-                            loyalty: 'add_loyalty_points', store_stock: 'check_inventory_status',
-                            kitchen_flow: 'halt_kitchen_item', promotions: 'draft_promo',
-                            attendance: 'record_attendance_note', logistics: 'optimise_driver_routes',
-                            push_notifications: 'send_marketing_push', supplier_orders: 'reorder_supplier_item',
-                            distribution: 'check_distribution_status', warehouse_stock: 'check_warehouse_stock',
-                            costings: 'check_costings', wastage: 'check_wastage',
-                            kitchen_stations: 'check_kitchen_stations', email_campaigns: 'send_email_campaign',
-                            sms_campaigns: 'send_sms_campaign', engagement: 'check_engagement',
-                            rotas: 'check_rotas', staff_stations: 'check_staff_stations',
-                            performance: 'check_performance', payments: 'check_payments',
-                            reports: 'generate_report', accounts: 'check_accounts',
-                        };
-                        tool = domainMap[a.domain] ?? '';
+                    const tool = resolveActionTool(a);
+                    if (tool === 'clear_ui_widgets') {
+                        setActiveViz([]);
+                        continue;
                     }
-                    if (tool) setActiveViz(prev => [...prev, { id: a.id, tool, ts: Date.now(), args: (a as any).args ?? {} }]);
+                    if (isCheckTool(tool)) {
+                        upsertVizCard(tool, (a as any).args ?? {}, {
+                            reorder: false,
+                            allowResurrectDismissedCheck: false
+                        });
+                    } else {
+                        upsertVizCard(tool, (a as any).args ?? {});
+                    }
                 }
-                setSnap(p.snapshot); setStatus('ok');
+                setSnap(p.snapshot);
+                setStatus('ok');
+                setLiveIn('');
+                setInterim('');
+                setLiveState(prev => prev === 'processing' ? 'waiting' : prev);
             }
         };
-        es.onerror = () => setLiveState('disconnected');
+        es.onerror = () => {
+            if (esManualCloseRef.current) {
+                return;
+            }
+
+            // Browser tab/app switches can cause transient EventSource errors.
+            // Treat CONNECTING as recoverable and only reconnect on CLOSED.
+            if (es.readyState === EventSource.CLOSED) {
+                esRef.current = null;
+                setLiveState((prev) => (prev === 'idle' ? prev : 'connecting'));
+                if (esReconnectTimerRef.current) {
+                    clearTimeout(esReconnectTimerRef.current);
+                }
+                esReconnectTimerRef.current = setTimeout(() => {
+                    esReconnectTimerRef.current = null;
+                    if (!esRef.current && !esManualCloseRef.current) {
+                        openES();
+                    }
+                }, 500);
+            }
+        };
         esRef.current = es;
     }
-    function closeES() { esRef.current?.close(); esRef.current = null; }
+    function closeES() {
+        esManualCloseRef.current = true;
+        if (esReconnectTimerRef.current) {
+            clearTimeout(esReconnectTimerRef.current);
+            esReconnectTimerRef.current = null;
+        }
+        esRef.current?.close();
+        esRef.current = null;
+    }
 
     // ── Audio Playback (raw PCM from Gemini Live) ──
     function getPlayCtx(sampleRate: number) {
@@ -323,12 +553,18 @@ export function App() {
             playCtxRef.current = new (window.AudioContext ?? window.webkitAudioContext!)({ sampleRate });
             playNextTimeRef.current = 0;
         }
+        if (playCtxRef.current.state === 'suspended') void playCtxRef.current.resume();
         return playCtxRef.current;
     }
 
     function drainAudioQ() {
+        if (speakEndTimer.current) {
+            clearTimeout(speakEndTimer.current);
+            speakEndTimer.current = null;
+        }
         qRef.current = [];
         playingRef.current = false;
+        scheduledSourcesRef.current = 0;
         playNextTimeRef.current = 0;
         if (playCtxRef.current && playCtxRef.current.state !== 'closed') {
             playCtxRef.current.close().catch(() => {});
@@ -339,45 +575,58 @@ export function App() {
 
     function playQ() {
         if (liveMuted) return;
-        const c = qRef.current.shift();
-        if (!c) {
-            playingRef.current = false;
-            // Debounce: only mark as not speaking if no new audio arrives within 3s
-            if (!speakEndTimer.current) {
-                speakEndTimer.current = setTimeout(() => {
-                    speakEndTimer.current = null;
-                    if (!playingRef.current) setSpeaking(false);
-                }, 3000);
-            }
-            return;
-        }
-        // Cancel any pending "stop speaking" timer
         if (speakEndTimer.current) { clearTimeout(speakEndTimer.current); speakEndTimer.current = null; }
-        playingRef.current = true; setSpeaking(true);
-        try {
-            const bin = atob(c.data);
-            const bytes = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-            const int16 = new Int16Array(bytes.buffer);
-            const float32 = new Float32Array(int16.length);
-            for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
-            const rateMatch = c.mimeType.match(/rate=(\d+)/);
-            const outSr = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
-            const ctx = getPlayCtx(outSr);
-            const abuf = ctx.createBuffer(1, float32.length, outSr);
-            abuf.getChannelData(0).set(float32);
-            const src = ctx.createBufferSource();
-            src.buffer = abuf;
-            src.connect(ctx.destination);
-            // Schedule seamlessly after last chunk
-            const now = ctx.currentTime;
-            const startAt = Math.max(now, playNextTimeRef.current);
-            playNextTimeRef.current = startAt + abuf.duration;
-            src.onended = () => { void playQ(); };
-            src.start(startAt);
-        } catch (e) {
-            console.error('Audio playback failed:', e);
-            playingRef.current = false; setSpeaking(false); void playQ();
+
+        while (qRef.current.length > 0) {
+            const c = qRef.current.shift();
+            if (!c) break;
+
+            try {
+                const bin = atob(c.data);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const byteLen = bytes.byteLength - (bytes.byteLength % 2);
+                if (byteLen <= 0) continue;
+
+                const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, byteLen / 2);
+                const float32 = new Float32Array(int16.length);
+                for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+
+                const rateMatch = c.mimeType.match(/rate=(\d+)/);
+                const outSr = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
+                const ctx = getPlayCtx(outSr);
+                const abuf = ctx.createBuffer(1, float32.length, outSr);
+                abuf.getChannelData(0).set(float32);
+
+                const src = ctx.createBufferSource();
+                src.buffer = abuf;
+                src.connect(ctx.destination);
+
+                const startAt = Math.max(ctx.currentTime, playNextTimeRef.current);
+                playNextTimeRef.current = startAt + abuf.duration;
+
+                scheduledSourcesRef.current += 1;
+                playingRef.current = true;
+                setSpeaking(true);
+
+                src.onended = () => {
+                    scheduledSourcesRef.current = Math.max(0, scheduledSourcesRef.current - 1);
+                    if (scheduledSourcesRef.current === 0 && qRef.current.length === 0) {
+                        if (speakEndTimer.current) clearTimeout(speakEndTimer.current);
+                        speakEndTimer.current = setTimeout(() => {
+                            speakEndTimer.current = null;
+                            if (scheduledSourcesRef.current === 0 && qRef.current.length === 0) {
+                                playingRef.current = false;
+                                setSpeaking(false);
+                            }
+                        }, 140);
+                    }
+                };
+
+                src.start(startAt);
+            } catch (e) {
+                console.error('Audio playback failed:', e);
+            }
         }
     }
 
@@ -396,7 +645,9 @@ export function App() {
     async function teardown(sendStop: boolean) {
         stoppedRef.current = true;
         if (procRef.current) { procRef.current.onaudioprocess = null; procRef.current.disconnect(); }
+        micSinkRef.current?.disconnect();
         srcRef.current?.disconnect(); procRef.current = null; srcRef.current = null;
+        micSinkRef.current = null;
         flushingRef.current = false;
         streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null;
         if (ctxRef.current) { await ctxRef.current.close().catch(() => undefined); ctxRef.current = null; }
@@ -407,49 +658,119 @@ export function App() {
     async function startLive() {
         openES(); setErr(''); setLiveState('connecting'); stoppedRef.current = false;
         try {
-            await fetch(`${API}/api/live/session/start`, { method: 'POST' });
+            const tools = activeViz.map((viz) => viz.tool);
+            const widgets = buildVisibleWidgetPayload(activeViz);
+            widgetSyncSeqRef.current += 1;
+            const seq = widgetSyncSeqRef.current;
+            await fetch(`${API}/api/live/session/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ greet: true, tools, widgets, seq, clientId: widgetSyncClientIdRef.current })
+            });
+            await syncVisibleWidgets();
             const s = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
             const Ctor = window.AudioContext ?? window.webkitAudioContext; const ctx = new Ctor();
             const src = ctx.createMediaStreamSource(s); const proc = ctx.createScriptProcessor(4096, 1, 1);
+            const sink = ctx.createGain();
+            sink.gain.value = 0;
             srRef.current = ctx.sampleRate; streamRef.current = s; ctxRef.current = ctx; srcRef.current = src; procRef.current = proc;
+            micSinkRef.current = sink;
             proc.onaudioprocess = (e) => pushAudio(e.inputBuffer.getChannelData(0));
-            src.connect(proc); proc.connect(ctx.destination);
+            src.connect(proc);
+            proc.connect(sink);
+            sink.connect(ctx.destination);
             setLiveState('capturing'); setListening(true); setLiveIn(''); setLiveOut('');
-        } catch (e) { setListening(false); setLiveState('disconnected'); setErr(e instanceof Error ? e.message : 'Mic failed.'); await teardown(false); }
+        } catch (e) {
+            setListening(false);
+            setLiveState('disconnected');
+            const rawMsg = e instanceof Error ? e.message : 'Mic failed.';
+            const permissionDenied = /denied|notallowed|permission/i.test(rawMsg);
+            setErr(permissionDenied ? 'Microphone permission denied. You can type your command below.' : rawMsg);
+            setShowComposer(true);
+            setTimeout(() => promptInputRef.current?.focus(), 0);
+            await teardown(false);
+        }
     }
 
     async function stopLive() {
         setListening(false);
-        // 1. IMMEDIATELY tell the server to close the Gemini session (non-blocking)
-        //    This stops Gemini from generating any more audio output
-        fetch(`${API}/api/live/session/close`, { method: 'POST' }).catch(() => {});
-        // 2. Kill audio playback instantly (stops the voice)
+        // Stop local playback and microphone capture, but keep the live session open for continuity.
         drainAudioQ();
-        // 3. Tear down the mic/audio context
-        await teardown(false);
-        setLiveState('idle');
-        setLiveIn(''); setLiveOut(''); setInterim('');
+        await teardown(true);
+        setLiveState('waiting');
+        setLiveIn('');
+        setInterim('');
     }
 
     // ── Submit ──
-    const sendPromptDirect = async (text: string, modeOverride?: string) => {
-        if (!text.trim()) return;
-        setStatus('busy'); setErr('');
+    async function submitTypedPrompt(text: string) {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        const visibleItems = [...activeViz];
+        const visibleTools = visibleItems.map((viz) => viz.tool);
+        const visibleWidgets = buildVisibleWidgetPayload(visibleItems);
+        const widgetClientId = widgetSyncClientIdRef.current;
+        if (listening || liveState === 'capturing' || liveState === 'connecting') {
+            await stopLive();
+        }
+        else if (liveState === 'speaking' || liveState === 'processing' || liveState === 'interrupted' || scheduledSourcesRef.current > 0 || qRef.current.length > 0 || playingRef.current) {
+            // Interrupt in-flight output before starting a typed turn.
+            await fetch(`${API}/api/live/session/close`, { method: 'POST' }).catch(() => undefined);
+            drainAudioQ();
+            setLiveState('idle');
+        }
+        setErr('');
+        setStatus('busy');
+        openES();
+        setLiveIn(trimmed);
+        setInterim('');
+        setLiveState('waiting');
         try {
-            const res = await fetch(`${API}/api/session/respond`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: text, mode: modeOverride ?? mode })
+            // Ensure server has latest widget order before this turn is evaluated.
+            const widgetSeq = await syncVisibleWidgets(visibleItems);
+            const res = await fetch(`${API}/api/live/text`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text: trimmed,
+                    tools: visibleTools,
+                    widgets: visibleWidgets,
+                    seq: widgetSeq,
+                    clientId: widgetClientId
+                })
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Request failed.');
-            setSnap(data as Snapshot);
-            setStatus('ok'); setInterim('');
-        } catch (e) { setStatus('off'); setErr(e instanceof Error ? e.message : 'Error.'); }
-    };
-    const sendPromptRef = useRef(sendPromptDirect);
-    sendPromptRef.current = sendPromptDirect;
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(typeof data.error === 'string' ? data.error : 'Live text send failed.');
+            }
+            setStatus('ok');
+        } catch (e) {
+            setStatus('off');
+            setLiveState('disconnected');
+            setErr(e instanceof Error ? e.message : 'Live text send failed.');
+        }
+    }
 
-    function handleSubmit(ev: FormEvent) { ev.preventDefault(); void sendPromptRef.current(prompt); setPrompt(''); }
+    function submitComposerPrompt() {
+        const text = prompt;
+        setPrompt('');
+        void submitTypedPrompt(text);
+    }
+
+    function handlePromptKeyDown(ev: KeyboardEvent<HTMLInputElement>) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        submitComposerPrompt();
+    }
+
+    function focusPromptInput() {
+        if (!showComposer) {
+            setShowComposer(true);
+            setTimeout(() => promptInputRef.current?.focus(), 0);
+            return;
+        }
+        promptInputRef.current?.focus();
+    }
 
     // Reset
     async function resetScenario() {
@@ -461,6 +782,7 @@ export function App() {
         setSnap(snapData);
         setStatus('ok'); setErr(''); setLiveState('idle'); setInterim('');
         setActiveViz([]); seenActionIds.current.clear();
+        dismissedCheckToolsRef.current.clear();
     }
 
     // ── Voice ──
@@ -481,13 +803,13 @@ export function App() {
         rec.onend = () => {
             setListening(false); setInterim(''); recRef.current = null;
             // Auto-submit when speech recognition finishes
-            if (finalText.trim()) { void sendPromptRef.current(finalText); setPrompt(''); }
+            if (finalText.trim()) { void submitTypedPrompt(finalText); setPrompt(''); }
         };
         recRef.current = rec; setErr(''); setListening(true); rec.start();
     }
 
     function toggleVoice() {
-        if (listening || liveState === 'capturing' || liveState === 'connecting') {
+        if (speaking || liveState === 'speaking' || listening || liveState === 'capturing' || liveState === 'connecting') {
             drainAudioQ();
             void stopLive();
             return;
@@ -497,14 +819,15 @@ export function App() {
 
     // Determine the real conversational state
     const isLive = listening || ['capturing', 'connected', 'waiting', 'speaking', 'interrupted', 'processing'].includes(liveState);
+    const isSpeaking = speaking || liveState === 'speaking' || playingRef.current;
     // Processing = user has spoken (liveIn is set), Tilly hasn't started her audio response yet
-    const isProcessing = isLive && !speaking && liveIn.length > 0 && liveState === 'waiting';
+    const isProcessing = isLive && !isSpeaking && liveIn.length > 0 && liveOut.length === 0 && liveState === 'waiting';
     // Acting = server is executing tools after a completed turn
     const isActing = liveState === 'processing';
-    const orbState = speaking ? 'speaking' : isActing ? 'acting' : isProcessing ? 'processing' : isLive ? 'listening' : 'idle';
-    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'acting' ? '⚡ Taking action' : orbState === 'processing' ? '◌ Processing' : orbState === 'listening' ? '● Listening' : '○ Click to talk';
+    const orbState = isSpeaking ? 'speaking' : isActing ? 'acting' : isProcessing ? 'processing' : isLive ? 'listening' : 'idle';
+    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'acting' ? '⚡ Taking action' : orbState === 'processing' ? '◌ Processing' : orbState === 'listening' ? '● Listening' : '○ Click to talk or type';
     const dotClass = status === 'off' ? 'offline' : isLive ? 'running' : '';
-    const statusText = !isLive ? 'Ready' : speaking ? 'Speaking' : isActing ? 'Acting' : isProcessing ? 'Processing' : 'Listening';
+    const statusText = !isLive ? 'Ready' : isSpeaking ? 'Speaking' : isActing ? 'Acting' : isProcessing ? 'Processing' : 'Listening';
 
     return (
         <main className="shell">
@@ -548,7 +871,20 @@ export function App() {
                                 </button>
                                 <div className={`panelGroupBody ${isOpen ? 'open' : ''}`}>
                                     {groupPanels.map(p => (
-                                        <article key={p.id} className={`pCard tone-${p.tone} ${flashPanels.has(p.id) ? 'flash' : ''}`}>
+                                        <article
+                                            key={p.id}
+                                            className={`pCard tone-${p.tone} ${flashPanels.has(p.id) ? 'flash' : ''}`}
+                                            onClick={() => replayVizForPanel(p.id)}
+                                            onKeyDown={(ev) => {
+                                                if (ev.key === 'Enter' || ev.key === ' ') {
+                                                    ev.preventDefault();
+                                                    replayVizForPanel(p.id);
+                                                }
+                                            }}
+                                            role="button"
+                                            tabIndex={0}
+                                            style={{ cursor: 'pointer' }}
+                                        >
                                             <div className="pLabel"><span className="pIcon">{ICONS[p.id] ?? '📊'}</span> {p.label}</div>
                                             <div className="pRow">
                                                 <span className="pVal">{p.value}</span>
@@ -574,20 +910,34 @@ export function App() {
                             <div className="ring ring3" />
                             <div className={`orb ${orbState}`} />
                         </div>
-                        <div className={`orbTag ${orbState !== 'idle' ? 'on' : ''}`}>{orbTag}</div>
+                        <div
+                            className={`orbTag ${orbState !== 'idle' ? 'on' : ''}`}
+                            onClick={focusPromptInput}
+                            onKeyDown={(ev) => {
+                                if (ev.key === 'Enter' || ev.key === ' ') {
+                                    ev.preventDefault();
+                                    focusPromptInput();
+                                }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            title="Type your command"
+                        >
+                            {orbTag}
+                        </div>
                     </div>
                     <div className="orbSpacer" />
 
                     {/* Action Visualization Stage */}
-                    {isLive && activeViz.length > 0 && (
+                    {activeViz.length > 0 && (
                         <div className="actionStage">
                             {activeViz.map((v, vi) => {
-                                const age = Date.now() - v.ts;
-                                const exiting = age > 7000;
+                                const exiting = false;
                                 switch (v.tool) {
                                     case 'check_driver_status':
                                         return (
                                             <div key={v.id} className={`vizCard viz-drivers ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🚗</span>
                                                     <span className="vizTitle">Driver Status Scan</span>
@@ -613,6 +963,7 @@ export function App() {
                                     case 'check_inventory_status':
                                         return (
                                             <div key={v.id} className={`vizCard viz-inventory ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📦</span>
                                                     <span className="vizTitle">Stock Level Scan</span>
@@ -640,6 +991,7 @@ export function App() {
                                     case 'halt_kitchen_item':
                                         return (
                                             <div key={v.id} className={`vizCard viz-kitchen ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🍳</span>
                                                     <span className="vizTitle">Kitchen Override</span>
@@ -658,6 +1010,7 @@ export function App() {
                                     case 'draft_promo':
                                         return (
                                             <div key={v.id} className={`vizCard viz-promo ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📣</span>
                                                     <span className="vizTitle">Campaign Builder</span>
@@ -677,6 +1030,7 @@ export function App() {
                                     case 'send_marketing_push':
                                         return (
                                             <div key={v.id} className={`vizCard viz-push ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📱</span>
                                                     <span className="vizTitle">Push Broadcast</span>
@@ -695,6 +1049,7 @@ export function App() {
                                     case 'send_customer_apology':
                                         return (
                                             <div key={v.id} className={`vizCard viz-sms ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">💬</span>
                                                     <span className="vizTitle">SMS Dispatch</span>
@@ -709,6 +1064,7 @@ export function App() {
                                     case 'add_loyalty_points':
                                         return (
                                             <div key={v.id} className={`vizCard viz-loyalty ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">⭐</span>
                                                     <span className="vizTitle">Loyalty Credit</span>
@@ -728,6 +1084,7 @@ export function App() {
                                     case 'record_attendance_note':
                                         return (
                                             <div key={v.id} className={`vizCard viz-staff ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">👥</span>
                                                     <span className="vizTitle">Staff Log</span>
@@ -746,6 +1103,7 @@ export function App() {
                                     case 'reorder_supplier_item':
                                         return (
                                             <div key={v.id} className={`vizCard viz-supplier ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📋</span>
                                                     <span className="vizTitle">Supplier Order</span>
@@ -765,6 +1123,7 @@ export function App() {
                                     case 'optimise_driver_routes':
                                         return (
                                             <div key={v.id} className={`vizCard viz-routes ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🗺️</span>
                                                     <span className="vizTitle">Route Optimiser</span>
@@ -786,6 +1145,7 @@ export function App() {
                                     case 'check_distribution_status':
                                         return (
                                             <div key={v.id} className={`vizCard viz-drivers ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🚛</span>
                                                     <span className="vizTitle">Distribution Fleet</span>
@@ -810,6 +1170,7 @@ export function App() {
                                     case 'check_warehouse_stock':
                                         return (
                                             <div key={v.id} className={`vizCard viz-inventory ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🏭</span>
                                                     <span className="vizTitle">Warehouse Stock</span>
@@ -836,6 +1197,7 @@ export function App() {
                                     case 'check_costings':
                                         return (
                                             <div key={v.id} className={`vizCard viz-inventory ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">💷</span>
                                                     <span className="vizTitle">Costings</span>
@@ -862,6 +1224,7 @@ export function App() {
                                     case 'check_wastage':
                                         return (
                                             <div key={v.id} className={`vizCard viz-inventory ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🗑️</span>
                                                     <span className="vizTitle">Wastage Report</span>
@@ -888,6 +1251,7 @@ export function App() {
                                     case 'check_kitchen_stations':
                                         return (
                                             <div key={v.id} className={`vizCard viz-staff ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🍳</span>
                                                     <span className="vizTitle">Kitchen Stations</span>
@@ -913,6 +1277,7 @@ export function App() {
                                     case 'send_email_campaign':
                                         return (
                                             <div key={v.id} className={`vizCard viz-push ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📧</span>
                                                     <span className="vizTitle">Email Campaign</span>
@@ -932,6 +1297,7 @@ export function App() {
                                     case 'send_sms_campaign':
                                         return (
                                             <div key={v.id} className={`vizCard viz-push ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">💬</span>
                                                     <span className="vizTitle">SMS Campaign</span>
@@ -951,6 +1317,7 @@ export function App() {
                                     case 'check_engagement':
                                         return (
                                             <div key={v.id} className={`vizCard viz-loyalty ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🎮</span>
                                                     <span className="vizTitle">Games & Incentives</span>
@@ -977,6 +1344,7 @@ export function App() {
                                     case 'check_rotas':
                                         return (
                                             <div key={v.id} className={`vizCard viz-staff ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📅</span>
                                                     <span className="vizTitle">Rotas & Schedules</span>
@@ -1002,6 +1370,7 @@ export function App() {
                                     case 'check_staff_stations':
                                         return (
                                             <div key={v.id} className={`vizCard viz-staff ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📍</span>
                                                     <span className="vizTitle">Staff Stations</span>
@@ -1027,6 +1396,7 @@ export function App() {
                                     case 'check_performance':
                                         return (
                                             <div key={v.id} className={`vizCard viz-staff ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📈</span>
                                                     <span className="vizTitle">Performance</span>
@@ -1053,6 +1423,7 @@ export function App() {
                                     case 'check_payments':
                                         return (
                                             <div key={v.id} className={`vizCard viz-inventory ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">💳</span>
                                                     <span className="vizTitle">Payment Status</span>
@@ -1079,6 +1450,7 @@ export function App() {
                                     case 'generate_report':
                                         return (
                                             <div key={v.id} className={`vizCard viz-routes ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📊</span>
                                                     <span className="vizTitle">Report Generator</span>
@@ -1098,6 +1470,7 @@ export function App() {
                                     case 'check_accounts':
                                         return (
                                             <div key={v.id} className={`vizCard viz-inventory ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                                <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">🧾</span>
                                                     <span className="vizTitle">Accounts Overview</span>
@@ -1134,7 +1507,20 @@ export function App() {
                     <div className="railTitle">Action Timeline</div>
                     <div className="railScroll" ref={railScrollRef}>
                         {snap.actions.map((a, i) => (
-                            <div key={a.id} className={`aCard ${i === 0 && snap.actions.length > 1 ? 'fresh' : ''}`} style={{ animationDelay: `${i * 80}ms` }}>
+                            <div
+                                key={a.id}
+                                className={`aCard ${i === 0 && snap.actions.length > 1 ? 'fresh' : ''}`}
+                                style={{ animationDelay: `${i * 80}ms`, cursor: 'pointer' }}
+                                onClick={() => replayVizForAction(a)}
+                                onKeyDown={(ev) => {
+                                    if (ev.key === 'Enter' || ev.key === ' ') {
+                                        ev.preventDefault();
+                                        replayVizForAction(a);
+                                    }
+                                }}
+                                role="button"
+                                tabIndex={0}
+                            >
                                 <div className="aHead">
                                     <span className="aTitle">{a.title}</span>
                                     <span className={`aBadge ${a.status}`}>{a.status === 'done' ? '✓' : '⏳'}</span>
@@ -1147,8 +1533,36 @@ export function App() {
                 </aside>
             </section>
 
+            {showComposer && (
+                <div className="composer">
+                <button
+                    className={`iconBtn ${isLive ? 'on' : ''}`}
+                    type="button"
+                    onClick={toggleVoice}
+                    title={isLive ? 'Stop voice input' : 'Start voice input'}
+                >
+                    {isLive ? '■' : '●'}
+                </button>
+                <input
+                    ref={promptInputRef}
+                    className="cInput"
+                    value={prompt}
+                    onChange={(ev) => setPrompt(ev.target.value)}
+                    onKeyDown={handlePromptKeyDown}
+                    placeholder="Type what you want Tilly to do..."
+                    aria-label="Type a command for Tilly"
+                />
+                <button className="sendBtn" type="button" onClick={submitComposerPrompt} disabled={!prompt.trim() || status === 'busy'}>
+                    Send
+                </button>
+                </div>
+            )}
 
             {err && <span className="errMsg" style={{ padding: '0.5rem 1rem' }}>{err}</span>}
         </main>
     );
 }
+
+
+
+

@@ -32,44 +32,44 @@ export function createInitialSnapshot(liveReady: boolean): Snapshot {
         ],
         panels: [
             // 🚚 Delivery & Logistics
-            panel('delivery_drivers', 'Delivery Drivers', '—', 'Awaiting data', 'stable', '—'),
-            panel('distribution', 'Distribution', '—', 'Awaiting data', 'stable', '—'),
-            panel('logistics', 'Logistics Overview', '—', 'Awaiting data', 'stable', '—'),
+            panel('delivery_drivers', 'Delivery Drivers', '1 delayed', 'Four evening drivers clocked in. One route affected by traffic.', 'warn', '15 min delay'),
+            panel('distribution', 'Distribution', '2 active runs', 'Central dispatch vans en route to stores on schedule.', 'stable', 'On schedule'),
+            panel('logistics', 'Logistics Overview', 'Traffic pressure', 'Live routing has one delayed leg; replans available.', 'warn', 'Congestion active'),
 
             // 📦 Inventory & Stock
-            panel('store_stock', 'Store Stock', '—', 'Awaiting data', 'stable', '—'),
-            panel('warehouse_stock', 'Warehouse Stock', '—', 'Awaiting data', 'stable', '—'),
-            panel('supplier_orders', 'Supplier Orders', '—', 'Awaiting data', 'stable', '—'),
-            panel('costings', 'Costings', '—', 'Awaiting data', 'stable', '—'),
-            panel('wastage', 'Wastage', '—', 'Awaiting data', 'stable', '—'),
+            panel('store_stock', 'Store Stock', 'Fresh dough low', 'Fresh dough is below Friday safety threshold.', 'critical', '20 portions'),
+            panel('warehouse_stock', 'Warehouse Stock', 'Stable', 'Warehouse buffer stock healthy across core lines.', 'stable', 'All above threshold'),
+            panel('supplier_orders', 'Supplier Orders', 'No urgent PO', 'No immediate emergency reorder currently required.', 'stable', 'Queue clear'),
+            panel('costings', 'Costings', 'Loaded fries: £2.40', 'Margin currently healthy on featured add-on items.', 'stable', 'Margin healthy'),
+            panel('wastage', 'Wastage', '2 flags', 'Today\'s wastage within expected range.', 'warn', '£12 today'),
 
             // 🍳 Kitchen
-            panel('kitchen_flow', 'Kitchen Flow', '—', 'Awaiting data', 'stable', '—'),
-            panel('kitchen_stations', 'Stations', '—', 'Awaiting data', 'stable', '—'),
+            panel('kitchen_flow', 'Kitchen Flow', 'Conservation watch', 'Prep decisions adjusted to protect dough usage.', 'warn', 'Active alert'),
+            panel('kitchen_stations', 'Stations', 'All covered', 'Grill, fryer, and expediting positions covered.', 'stable', '4 active'),
 
             // 📣 Marketing & Campaigns
-            panel('promotions', 'Promotions', '—', 'Awaiting data', 'stable', '—'),
-            panel('push_notifications', 'Push Notifications', '—', 'Awaiting data', 'stable', '—'),
-            panel('email_campaigns', 'Email Campaigns', '—', 'Awaiting data', 'stable', '—'),
-            panel('sms_campaigns', 'SMS Campaigns', '—', 'Awaiting data', 'stable', '—'),
+            panel('promotions', 'Promotions', 'No active draft', 'No live promotional draft currently staged.', 'stable', 'Idle'),
+            panel('push_notifications', 'Push Notifications', 'Idle', 'No push broadcast has been sent this shift.', 'stable', '0 sent'),
+            panel('email_campaigns', 'Email Campaigns', 'Idle', 'No email campaign currently queued.', 'stable', '0 sent'),
+            panel('sms_campaigns', 'SMS Campaigns', 'Idle', 'No SMS campaign currently queued.', 'stable', '0 sent'),
 
             // 💰 Loyalty & Engagement
-            panel('loyalty', 'Loyalty', '—', 'Awaiting data', 'stable', '—'),
-            panel('engagement', 'Games & Incentives', '—', 'Awaiting data', 'stable', '—'),
+            panel('loyalty', 'Loyalty', 'Comp policy ready', 'Loyalty compensation available for service recovery.', 'stable', 'Ready'),
+            panel('engagement', 'Games & Incentives', 'Live', 'Scratch & Win active for app users.', 'boost', '38 plays'),
 
             // 👥 Customer Service
-            panel('customer_comms', 'Customer Comms', '—', 'Awaiting data', 'stable', '—'),
+            panel('customer_comms', 'Customer Comms', 'Queue clear', 'No unresolved customer comms escalations.', 'stable', '0 urgent'),
 
             // 👷 Staffing & HR
-            panel('rotas', 'Rotas & Schedules', '—', 'Awaiting data', 'stable', '—'),
-            panel('attendance', 'Attendance', '—', 'Awaiting data', 'stable', '—'),
-            panel('staff_stations', 'Staff Stations', '—', 'Awaiting data', 'stable', '—'),
-            panel('performance', 'Performance', '—', 'Awaiting data', 'stable', '—'),
+            panel('rotas', 'Rotas & Schedules', 'Fully covered', 'Evening rota fully covered for next 48 hours.', 'stable', 'No gaps'),
+            panel('attendance', 'Attendance', '1 late arrival', 'Sarah clocked in 15 minutes late.', 'warn', '15 min late'),
+            panel('staff_stations', 'Staff Stations', '3 stations active', 'Station assignments confirmed across floor and kitchen.', 'stable', 'All covered'),
+            panel('performance', 'Performance', 'Team on track', 'Current shift KPIs tracking to target.', 'stable', 'Avg 92%'),
 
             // 📊 Accounting & Reports
-            panel('payments', 'Payments', '—', 'Awaiting data', 'stable', '—'),
-            panel('reports', 'Reports', '—', 'Awaiting data', 'stable', '—'),
-            panel('accounts', 'Accounts', '—', 'Awaiting data', 'stable', '—'),
+            panel('payments', 'Payments', '147 today', 'Payment provider online with no failure spike.', 'stable', '£3,240'),
+            panel('reports', 'Reports', 'Sales summary', 'Most recent operational report available for review.', 'stable', 'Generated'),
+            panel('accounts', 'Accounts', 'VAT current', 'No overdue invoices currently flagged.', 'stable', 'All clear'),
         ],
         heroStats: [
             { id: 'coverage', label: 'Operational Domains', value: '8 areas • 24 panels' },
@@ -437,6 +437,11 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
             pushAction(snapshot, 'Checked accounts overview', 'accounts', info, args);
             break;
         }
+        case 'clear_ui_widgets': {
+            const detail = args.detail || 'Cleared active UI widgets from the main stage.';
+            pushAction(snapshot, 'Cleared active widget stage', 'control', detail, args);
+            break;
+        }
         default: {
             pushAction(snapshot, `Logged action: ${action.tool}`, 'control', 'Action preserved in timeline.');
         }
@@ -445,17 +450,26 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
 
 export function applyPlan(current: Snapshot, prompt: string, plan: AgentPlan, engine: 'mock' | 'gemini' | 'live'): Snapshot {
     const next: Snapshot = structuredClone(current);
+    const trimmedPrompt = prompt.trim();
+    const spoken = plan.spoken.trim();
 
     next.meta.engine = engine;
-    next.meta.lastPrompt = prompt;
+    if (trimmedPrompt.length > 0) {
+        next.meta.lastPrompt = trimmedPrompt;
+    }
     next.meta.nextSuggestion = plan.nextSuggestion;
     next.summary = plan.summary;
-    next.speaking = plan.spoken;
-    next.transcript = [
-        ...next.transcript,
-        makeEntry('operator', prompt),
-        makeEntry('tilly', plan.spoken)
-    ].slice(-10);
+    next.speaking = spoken;
+    const newTranscriptEntries: TranscriptEntry[] = [];
+    if (trimmedPrompt.length > 0) {
+        newTranscriptEntries.push(makeEntry('operator', trimmedPrompt));
+    }
+    if (spoken.length > 0) {
+        newTranscriptEntries.push(makeEntry('tilly', spoken));
+    }
+    if (newTranscriptEntries.length > 0) {
+        next.transcript = [...next.transcript, ...newTranscriptEntries];
+    }
 
     for (const action of plan.actions) {
         applyAction(next, action);
@@ -474,13 +488,40 @@ function includesAny(text: string, values: string[]) {
     return values.some((value) => text.includes(value));
 }
 
+function isOverviewIntent(text: string) {
+    const t = text.toLowerCase();
+    if (includesAny(t, [
+        'show me everything',
+        'show everything',
+        'full overview',
+        'full status',
+        'complete overview',
+        'complete rundown',
+        'entire operation',
+        'across all areas',
+        'across the business',
+        'overall status',
+        'operational rundown',
+        'status update'
+    ])) {
+        return true;
+    }
+
+    const hasRequestVerb = /\b(show|give|check|scan|run|pull|tell|what(?:'| i)s)\b/.test(t);
+    const hasScopeWord = /\b(everything|all|full|entire|overall|complete)\b/.test(t);
+    const hasDomainWord = /\b(status|overview|rundown|operation|business|systems|areas|state)\b/.test(t);
+    return hasRequestVerb && hasScopeWord && hasDomainWord;
+}
+
 /**
  * Smart plan: matches on Tilly's OUTPUT transcript (what she says she's done)
  * and extracts dynamic data from the conversation.
  * Only fires actions when Tilly's response indicates she has actually performed them.
  */
 export function createSmartPlan(inputText: string, outputText: string, current: Snapshot): AgentPlan {
+    const inp = inputText.toLowerCase();
     const out = outputText.toLowerCase();
+    const combined = `${inp} ${out}`;
     const data = extractData(outputText + ' ' + inputText);
     const actions: PlannedAction[] = [];
 
@@ -548,7 +589,7 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
     }
 
     // ── Staff attendance: Tilly confirms she's recorded attendance ──
-    if (includesAny(out, ['attendance logged', 'attendance noted', 'late arrival recorded', 'logged the late', 'flagged in the system', 'marked as late', 'noted that down', 'recorded that'])) {
+    if (includesAny(out, ['attendance logged', 'attendance noted', 'late arrival recorded', 'logged the late arrival', 'attendance entry created', 'marked as late'])) {
         if (includesAny(out, ['staff', 'sarah', 'late', 'attendance', 'shift', 'arrived'])) {
             actions.push({ tool: 'record_attendance_note', args: {
                 name: data.name || 'Staff member',
@@ -655,10 +696,59 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
         }
     }
 
+    if (includesAny(out, ['clear the ui', 'clear ui', 'clear widgets', 'clear the widget', 'clear the screen', 'reset the stage', 'clean slate'])) {
+        if (!actions.some(a => a.tool === 'clear_ui_widgets')) {
+            actions.unshift({ tool: 'clear_ui_widgets' });
+        }
+    }
+
+    const overviewTools: PlannedAction['tool'][] = [
+        'check_driver_status',
+        'check_inventory_status',
+        'check_distribution_status',
+        'check_warehouse_stock',
+        'check_kitchen_stations',
+        'check_rotas',
+        'check_payments',
+        'check_accounts'
+    ];
+
+    const domainSignals: Array<{ tool: PlannedAction['tool']; keywords: string[] }> = [
+        { tool: 'check_driver_status', keywords: ['driver', 'delivery', 'eta', 'route', 'fleet'] },
+        { tool: 'check_inventory_status', keywords: ['inventory', 'store stock', 'stock level', 'dough', 'portion', 'prep stock'] },
+        { tool: 'check_distribution_status', keywords: ['distribution', 'dispatch', 'store transfer', 'transfer status', 'distribution van'] },
+        { tool: 'check_warehouse_stock', keywords: ['warehouse stock', 'warehouse inventory', 'bulk stock', 'central stock'] },
+        { tool: 'check_kitchen_stations', keywords: ['kitchen station', 'grill', 'fryer', 'expedit', 'line covered'] },
+        { tool: 'check_rotas', keywords: ['rota', 'roster', 'shift coverage', 'coverage gap', 'staffing'] },
+        { tool: 'check_payments', keywords: ['payment', 'transaction', 'settlement', 'card machine'] },
+        { tool: 'check_accounts', keywords: ['accounts', 'vat', 'invoice', 'financial summary'] },
+    ];
+
+    const hintedTools = domainSignals
+        .filter((signal) => includesAny(combined, signal.keywords))
+        .map((signal) => signal.tool);
+
+    // General fan-out rule:
+    // - explicit full-overview intents get the full cross-domain bundle
+    // - otherwise, if multiple domains are hinted, add those domain checks
+    if (isOverviewIntent(inp)) {
+        for (const tool of overviewTools) {
+            if (!actions.some(a => a.tool === tool)) actions.push({ tool });
+        }
+    } else if (hintedTools.length >= 2) {
+        for (const tool of hintedTools) {
+            if (!actions.some(a => a.tool === tool)) actions.push({ tool });
+        }
+    }
+
     const priorContext = current.meta.lastPrompt ? 'Context from the previous operator turn has been preserved.' : 'This is the opening turn of the session.';
 
-    // Cap to prevent runaway tool creation — one answer should not fire 20 panels
-    const cappedActions = actions.slice(0, 3);
+    // Adaptive cap:
+    // - full overview: broad fan-out
+    // - multi-domain hints: medium fan-out
+    // - normal turn: tight cap
+    const isOverview = isOverviewIntent(inp);
+    const cappedActions = actions.slice(0, isOverview ? 8 : hintedTools.length >= 3 ? 6 : 4);
 
     return {
         summary: cappedActions.length > 0
@@ -677,7 +767,11 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     const data = extractData(prompt);
     const actions: PlannedAction[] = [];
 
-    if (includesAny(text, ['rundown', 'overview', 'status update', 'brief', 'everything going'])) {
+    if (includesAny(text, ['clear ui', 'clear the ui', 'clear widgets', 'clear the widgets', 'clear screen', 'reset stage', 'clean slate', 'remove widgets'])) {
+        actions.push({ tool: 'clear_ui_widgets' });
+    }
+
+    if (isOverviewIntent(text) || includesAny(text, ['rundown', 'overview', 'status update', 'brief', 'everything going'])) {
         actions.push({ tool: 'check_driver_status' }, { tool: 'check_inventory_status' }, { tool: 'check_distribution_status' }, { tool: 'check_rotas' }, { tool: 'check_payments' });
     }
     if (includesAny(text, ['driver', 'clocked', 'delivery']) && !actions.some(a => a.tool === 'check_driver_status')) {

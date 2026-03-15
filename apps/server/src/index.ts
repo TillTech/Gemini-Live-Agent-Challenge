@@ -1,13 +1,21 @@
 import http from 'node:http';
 import { planWithGemini, isGeminiConfigured } from './gemini.js';
 import {
+    applyLiveWidgetTool,
+    clearLiveVisibleWidgets,
     closeLiveSession,
+    hasLiveVisibleWidgets,
     isLiveConfigured,
     planWithLiveSession,
+    requestLiveGreeting,
+    resetLiveTranscriptHistory,
     sendLiveAudioChunk,
+    sendLiveTextInput,
     startLiveAudioSession,
     stopLiveAudioInput,
     subscribeLiveEvents,
+    syncLiveAudioState,
+    updateLiveVisibleWidgets,
     type LiveStreamEvent
 } from './liveSession.js';
 import { applyAction, applyPlan, createInitialSnapshot, createMockPlan, createSmartPlan } from './scenario.js';
@@ -20,6 +28,37 @@ const liveSessionReady = isLiveConfigured();
 let state = createInitialSnapshot(liveReady);
 const liveEventClients = new Set<http.ServerResponse>();
 const turnFunctionCalls = new Set<string>();
+let lastOperatorInput = '';
+
+const INFO_TOOLS = new Set([
+    'check_driver_status', 'check_inventory_status',
+    'check_distribution_status', 'check_warehouse_stock',
+    'check_wastage', 'check_kitchen_stations', 'check_engagement',
+    'check_rotas', 'check_staff_stations',
+    'check_payments', 'check_accounts', 'check_costings', 'generate_report',
+    'clear_ui_widgets'
+]);
+
+function hasClearUiIntent(text: string) {
+    const t = text.toLowerCase();
+    return /\b(clear|reset|declutter|remove)\b/.test(t) && /\b(ui|widget|widgets|stage|screen)\b/.test(t);
+}
+
+function mergeUniqueActions(base: Array<{ tool: string; args?: Record<string, string> }>, extra: Array<{ tool: string; args?: Record<string, string> }>, max = 8) {
+    const merged = [...base];
+    const seen = new Set(base.map((a) => a.tool));
+    for (const action of extra) {
+        if (seen.has(action.tool)) {
+            continue;
+        }
+        merged.push(action);
+        seen.add(action.tool);
+        if (merged.length >= max) {
+            break;
+        }
+    }
+    return merged;
+}
 
 function broadcastLiveEvent(event: LiveStreamEvent | { type: 'snapshot'; snapshot: Snapshot }) {
     const payload = `data: ${JSON.stringify(event)}\n\n`;
@@ -32,12 +71,23 @@ function broadcastLiveEvent(event: LiveStreamEvent | { type: 'snapshot'; snapsho
 subscribeLiveEvents((event) => {
     broadcastLiveEvent(event);
 
+    if (event.type === 'input_transcript' && event.final) {
+        lastOperatorInput = event.text;
+        syncLiveAudioState(state, true);
+    }
+
     // Track tools already called via function_call during this turn
     if (event.type === 'function_call') {
         turnFunctionCalls.add(event.name);
+        if (event.name === 'clear_ui_widgets' && (!hasLiveVisibleWidgets() || !hasClearUiIntent(lastOperatorInput))) {
+            syncLiveAudioState(state);
+            return;
+        }
+        applyLiveWidgetTool(event.name);
         const action = { tool: event.name, args: event.args as Record<string, string> };
         applyAction(state, action);
         broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+        syncLiveAudioState(state);
     }
 
     // When a live voice turn completes, determine actions via multiple fallback paths
@@ -48,58 +98,39 @@ subscribeLiveEvents((event) => {
             // 1. Try output-transcript matching first (most accurate)
             let plan = createSmartPlan(inp, out, state);
             plan.actions = plan.actions.filter(a => !turnFunctionCalls.has(a.tool));
+            plan.actions = plan.actions.filter(a => a.tool !== 'clear_ui_widgets' || (hasLiveVisibleWidgets() && hasClearUiIntent(inp)));
 
-            // 2. If no function_calls happened AND smart plan found nothing, 
-            //    fall back to INPUT keyword matching (the audio model doesn't reliably call tools)
-            if (turnFunctionCalls.size === 0 && plan.actions.length === 0 && inp) {
-                const INFO_TOOLS = new Set([
-                    'check_driver_status', 'check_inventory_status',
-                    'check_distribution_status', 'check_warehouse_stock',
-                    'check_wastage', 'check_kitchen_stations', 'check_engagement',
-                    'check_rotas', 'check_staff_stations',
-                    'check_payments', 'check_accounts'
-                ]);
+            // 2. Coverage layer: merge request-derived info actions so broad asks do not collapse to one tool.
+            if (inp) {
                 const fallback = createMockPlan(inp, state);
-                
-                // Check if input has confirmation language or specific detail
                 const low = inp.toLowerCase();
                 const hasConfirmation = /\b(yes|yep|yeah|go ahead|send it|do it|confirm|go for it|that's right|sounds good|perfect|ok send|ok do|please do|let's do|approved)\b/i.test(low);
                 const hasDetail = /\d+%|\d+ percent/i.test(low) || low.split(/\s+/).length > 8;
-                
-                // De-duplicate against existing snapshot actions
-                const existing = new Set(state.actions.map(a => a.domain));
-                
-                fallback.actions = fallback.actions.filter(a => {
-                    const domainMap: Record<string, string> = {
-                        check_driver_status: 'delivery_drivers', check_inventory_status: 'store_stock',
-                        halt_kitchen_item: 'kitchen_flow', draft_promo: 'promotions',
-                        send_marketing_push: 'push_notifications', send_customer_apology: 'customer_comms',
-                        add_loyalty_points: 'loyalty', record_attendance_note: 'attendance',
-                        reorder_supplier_item: 'supplier_orders', optimise_driver_routes: 'logistics',
-                        check_distribution_status: 'distribution', check_warehouse_stock: 'warehouse_stock',
-                        check_costings: 'costings', check_wastage: 'wastage',
-                        check_kitchen_stations: 'kitchen_stations', send_email_campaign: 'email_campaigns',
-                        send_sms_campaign: 'sms_campaigns', check_engagement: 'engagement',
-                        check_rotas: 'rotas', check_staff_stations: 'staff_stations',
-                        check_performance: 'performance', check_payments: 'payments',
-                        generate_report: 'reports', check_accounts: 'accounts'
-                    };
-                    // Skip if domain already in timeline
-                    if (existing.has(domainMap[a.tool] || '')) return false;
-                    // Info tools: fire immediately
+
+                const filteredFallback = fallback.actions.filter(a => {
                     if (INFO_TOOLS.has(a.tool)) return true;
-                    // Action tools: only fire with confirmation or enough detail
                     return hasConfirmation || hasDetail;
                 });
-                if (fallback.actions.length > 0) {
-                    plan = fallback;
+
+                if (plan.actions.length === 0 && filteredFallback.length > 0) {
+                    plan = { ...fallback, actions: filteredFallback };
+                } else {
+                    const infoFallback = filteredFallback.filter((a) => INFO_TOOLS.has(a.tool));
+                    if (infoFallback.length > 0) {
+                        plan.actions = mergeUniqueActions(plan.actions, infoFallback, 8);
+                    }
                 }
             }
 
             state = applyPlan(state, inp, plan, 'live');
+            for (const action of plan.actions) {
+                applyLiveWidgetTool(action.tool);
+            }
             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+            syncLiveAudioState(state);
         }
         turnFunctionCalls.clear();
+        lastOperatorInput = '';
     }
 });
 
@@ -143,7 +174,11 @@ async function respondToPrompt(prompt: string, requestedMode: ResponseMode): Pro
         try {
             const livePlan = await planWithLiveSession(prompt, state);
             if (livePlan) {
+                livePlan.actions = livePlan.actions.filter(a => a.tool !== 'clear_ui_widgets' || (hasLiveVisibleWidgets() && hasClearUiIntent(prompt)));
                 state = applyPlan(state, prompt, livePlan, 'live');
+                for (const action of livePlan.actions) {
+                    applyLiveWidgetTool(action.tool);
+                }
                 return state;
             }
         } catch (error) {
@@ -155,7 +190,11 @@ async function respondToPrompt(prompt: string, requestedMode: ResponseMode): Pro
         try {
             const geminiPlan = await planWithGemini(prompt, state);
             if (geminiPlan) {
+                geminiPlan.actions = geminiPlan.actions.filter(a => a.tool !== 'clear_ui_widgets' || (hasLiveVisibleWidgets() && hasClearUiIntent(prompt)));
                 state = applyPlan(state, prompt, geminiPlan, 'gemini');
+                for (const action of geminiPlan.actions) {
+                    applyLiveWidgetTool(action.tool);
+                }
                 return state;
             }
         } catch (error) {
@@ -163,7 +202,12 @@ async function respondToPrompt(prompt: string, requestedMode: ResponseMode): Pro
         }
     }
 
-    state = applyPlan(state, prompt, createMockPlan(prompt, state), 'mock');
+    const mockPlan = createMockPlan(prompt, state);
+    mockPlan.actions = mockPlan.actions.filter(a => a.tool !== 'clear_ui_widgets' || (hasLiveVisibleWidgets() && hasClearUiIntent(prompt)));
+    state = applyPlan(state, prompt, mockPlan, 'mock');
+    for (const action of mockPlan.actions) {
+        applyLiveWidgetTool(action.tool);
+    }
     return state;
 }
 
@@ -231,7 +275,20 @@ const server = http.createServer((request, response) => {
         }
 
         if (request.method === 'POST' && request.url === '/api/live/session/start') {
-            await startLiveAudioSession();
+            const body = await readJsonBody<{ greet?: boolean; tools?: string[]; seq?: number; clientId?: string; widgets?: Array<{ tool: string; title?: string; summary?: string; facts?: string[]; args?: Record<string, string> }> }>(request);
+            const greet = Boolean(body.greet);
+            if (Array.isArray(body.tools)) {
+                updateLiveVisibleWidgets(body.tools, body.seq, body.clientId, body.widgets);
+            }
+            const started = await startLiveAudioSession({ greet });
+            if (!started) {
+                sendJson(response, { error: 'Live session is unavailable.' }, 503);
+                return;
+            }
+            syncLiveAudioState(state);
+            if (greet) {
+                requestLiveGreeting();
+            }
             sendJson(response, { ok: true });
             return;
         }
@@ -245,8 +302,40 @@ const server = http.createServer((request, response) => {
             }
 
             try {
-                await sendLiveAudioChunk(body.audioBase64, body.mimeType);
+                await sendLiveAudioChunk(body.audioBase64, body.mimeType, state);
             } catch { /* session already closed — drop silently */ }
+            sendJson(response, { ok: true });
+            return;
+        }
+
+        if (request.method === 'POST' && request.url === '/api/live/text') {
+            const body = await readJsonBody<{ text?: string; tools?: string[]; seq?: number; clientId?: string; widgets?: Array<{ tool: string; title?: string; summary?: string; facts?: string[]; args?: Record<string, string> }> }>(request);
+            const text = body.text?.trim();
+
+            if (!text) {
+                sendJson(response, { error: 'text is required.' }, 400);
+                return;
+            }
+
+            if (Array.isArray(body.tools)) {
+                updateLiveVisibleWidgets(body.tools, body.seq, body.clientId, body.widgets);
+                syncLiveAudioState(state);
+            }
+
+            const sent = await sendLiveTextInput(text, state);
+            if (!sent) {
+                sendJson(response, { error: 'Live session is unavailable.' }, 503);
+                return;
+            }
+            sendJson(response, { ok: true });
+            return;
+        }
+
+        if (request.method === 'POST' && request.url === '/api/live/ui/widgets') {
+            const body = await readJsonBody<{ tools?: string[]; seq?: number; clientId?: string; widgets?: Array<{ tool: string; title?: string; summary?: string; facts?: string[]; args?: Record<string, string> }> }>(request);
+            const tools = Array.isArray(body.tools) ? body.tools : [];
+            updateLiveVisibleWidgets(tools, body.seq, body.clientId, body.widgets);
+            syncLiveAudioState(state);
             sendJson(response, { ok: true });
             return;
         }
@@ -265,6 +354,8 @@ const server = http.createServer((request, response) => {
 
         if (request.method === 'POST' && request.url === '/api/scenario/reset') {
             closeLiveSession();
+            clearLiveVisibleWidgets();
+            resetLiveTranscriptHistory();
             state = createInitialSnapshot(liveReady);
             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
             sendJson(response, state);
