@@ -81,16 +81,29 @@ setLiveToolHandler((tool, args) => {
     broadcastLiveEvent({ type: 'snapshot', snapshot: state });
 
     if (tool === 'draft_email_campaign') {
-        const prompt = args.campaign || args.subject || 'A promotional hospitality email marketing campaign';
-        const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
-        pendingImageGen = true;
-        generateBrandImage(imagePrompt).then((b64) => {
-            if (b64) {
-                updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
-                broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-            }
-        }).catch(console.error).finally(() => { pendingImageGen = false; });
-        return 'Email drafting started in the background. Tell the user to review the preview on screen and ask if they are happy to send it.';
+        const prompt = args.campaign || args.subject || '';
+        // Only generate image if we have a meaningful campaign description (3+ words)
+        const isPromptReady = prompt.trim().split(/\s+/).length >= 3;
+        if (isPromptReady && !pendingImageGen) {
+            const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
+            pendingImageGen = true;
+            generateBrandImage(imagePrompt).then((b64) => {
+                if (b64) {
+                    updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
+                    broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+                }
+            }).catch(console.error).finally(() => { pendingImageGen = false; });
+        }
+        // Also auto-create a promo/campaign builder alongside the email draft
+        if (prompt && !state.actions.some(a => a.domain === 'promotions')) {
+            const promoAction = { tool: 'draft_promo', args: { campaign: prompt, pct: args.pct || '', item: args.item || '' } };
+            applyAction(state, promoAction);
+            applyLiveWidgetTool('draft_promo');
+            broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+        }
+        return isPromptReady
+            ? 'Email drafting started. The email preview image is being generated. Tell the user to review the preview on screen and ask if they are happy to send it.'
+            : 'Email campaign created but needs more detail. Ask the user to confirm the full offer details (what discount, what product, any code) so you can finalise the email with a proper preview image.';
     }
 
     if (tool === 'dispatch_email_campaign') {
@@ -169,7 +182,10 @@ subscribeLiveEvents((event) => {
                     // Only generate if no image exists yet for this draft
                     const existingEmailAction = state.actions.find(a => a.domain === 'email_campaigns');
                     if (existingEmailAction?.args?.imageUrl) continue;
-                    const prompt = action.args?.campaign || action.args?.subject || 'A promotional hospitality email marketing campaign';
+                    const prompt = action.args?.campaign || action.args?.subject || '';
+                    // Only generate image if we have a meaningful campaign description
+                    const isPromptReady = prompt.trim().split(/\s+/).length >= 3;
+                    if (!isPromptReady) continue;
                     const imagePrompt = `Generate a single mobile phone email newsletter screenshot for: ${prompt}. Portrait orientation (9:16 ratio), narrow mobile width, no desktop padding or white borders. Show the full email: brand logo header, eye-catching hero photo, headline text, short body copy, a bold CTA button, and a footer with social icons. Dark or coloured background, premium modern design, photorealistic render. Single column layout, no side-by-side panels.`;
                     pendingImageGen = true;
                     generateBrandImage(imagePrompt).then((b64) => {
@@ -178,10 +194,23 @@ subscribeLiveEvents((event) => {
                             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
                         }
                     }).catch(console.error).finally(() => { pendingImageGen = false; });
+                    // Also auto-create a promo/campaign builder if missing
+                    if (!state.actions.some(a => a.domain === 'promotions')) {
+                        const promoAction = { tool: 'draft_promo', args: { campaign: prompt, pct: action.args?.pct || '', item: action.args?.item || '' } };
+                        applyAction(state, promoAction);
+                        applyLiveWidgetTool('draft_promo');
+                    }
                 }
             }
             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-            syncLiveAudioState(state);
+            // Delay state sync to avoid interrupting the model's audio output
+            // (sendClientContent during model speech can cause audio cutoff)
+            const hasDraftOrDispatch = plan.actions.some(a => a.tool.startsWith('draft_') || a.tool.startsWith('dispatch_'));
+            if (hasDraftOrDispatch || turnFunctionCalls.size > 0) {
+                setTimeout(() => syncLiveAudioState(state), 2000);
+            } else {
+                syncLiveAudioState(state);
+            }
         }
         turnFunctionCalls.clear();
         lastOperatorInput = '';

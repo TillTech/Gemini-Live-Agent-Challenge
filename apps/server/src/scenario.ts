@@ -559,7 +559,9 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
     const inp = inputText.toLowerCase();
     const out = outputText.toLowerCase();
     const combined = `${inp} ${out}`;
+    // Extract data from output (for action detection) but campaign content from INPUT (user's words)
     const data = extractData(outputText + ' ' + inputText);
+    const inputData = extractData(inputText);
     const actions: PlannedAction[] = [];
 
     // ── Check drivers: Tilly confirms she's checked driver status ──
@@ -686,9 +688,11 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
     const hasDraftAlready = current.actions.some(a => a.domain === 'email_campaigns' && a.status === 'draft');
 
     if (includesAny(out, emailDispatchPhrases)) {
-        actions.push({ tool: 'dispatch_email_campaign', args: { campaign: data.campaign }, status: 'done' });
+        actions.push({ tool: 'dispatch_email_campaign', args: { campaign: inputData.campaign || data.campaign }, status: 'done' });
     } else if (includesAny(out, emailDraftPhrases) && !hasDraftAlready) {
-        actions.push({ tool: 'draft_email_campaign', args: { campaign: data.campaign }, status: 'draft' });
+        // Use the USER's input for campaign content, not Tilly's speech fragments
+        const campaignText = inputData.campaign || data.campaign;
+        actions.push({ tool: 'draft_email_campaign', args: { campaign: campaignText }, status: 'draft' });
     }
 
     // ── SMS campaign: Tilly confirms SMS draft ──
