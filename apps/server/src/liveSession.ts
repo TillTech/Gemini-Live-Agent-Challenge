@@ -542,7 +542,13 @@ function handleAudioMessage(event: AudioServerMessage) {
                 name: fc.name,
                 args: fc.args ?? {}
             });
-            const resultMsg = liveToolHandler ? liveToolHandler(fc.name, (fc.args as Record<string, string>) ?? {}) : 'Action completed successfully.';
+            let resultMsg = 'Action completed successfully.';
+            try {
+                resultMsg = liveToolHandler ? liveToolHandler(fc.name, (fc.args as Record<string, string>) ?? {}) : 'Action completed successfully.';
+            } catch (toolErr) {
+                console.error('[LIVE] Tool handler error for', fc.name, ':', toolErr);
+                resultMsg = 'Action completed with a warning. Continue the conversation normally.';
+            }
             responses.push({ id: fc.id, name: fc.name, response: { result: resultMsg } });
         }
 

@@ -204,12 +204,9 @@ subscribeLiveEvents((event) => {
                     }
                 }
                 broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-                // Delay state sync to avoid interrupting the model's audio output
-                // (sendClientContent during model speech can cause audio cutoff)
-                const hasDraftOrDispatch = plan.actions.some(a => a.tool.startsWith('draft_') || a.tool.startsWith('dispatch_'));
-                if (hasDraftOrDispatch || turnFunctionCalls.size > 0) {
-                    setTimeout(() => syncLiveAudioState(state), 2000);
-                } else {
+                // Only sync audio state if Tier 1 tool handler didn't already handle this turn
+                // (Tier 1 tool calls already sync state via broadcastLiveEvent in the handler)
+                if (turnFunctionCalls.size === 0) {
                     syncLiveAudioState(state);
                 }
             }
@@ -366,6 +363,12 @@ const server = http.createServer((request, response) => {
         if (request.method === 'POST' && request.url === '/api/live/session/start') {
             const body = await readJsonBody<{ greet?: boolean; tools?: string[]; seq?: number; clientId?: string; widgets?: Array<{ tool: string; title?: string; summary?: string; facts?: string[]; args?: Record<string, string> }> }>(request);
             const greet = Boolean(body.greet);
+            // Reset state for each new session so stale drafts don't block new actions
+            state = createInitialSnapshot(liveReady);
+            pendingImageGen = false;
+            turnFunctionCalls.clear();
+            lastOperatorInput = '';
+            broadcastLiveEvent({ type: 'snapshot', snapshot: state });
             if (Array.isArray(body.tools)) {
                 updateLiveVisibleWidgets(body.tools, body.seq, body.clientId, body.widgets);
             }
