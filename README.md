@@ -42,7 +42,7 @@ A single continuous voice conversation during a live shift — taken from the ac
 | Layer | Technology | Version |
 |-------|-----------|---------|
 | Voice | Gemini Live API | `gemini-2.5-flash-native-audio-preview-12-2025` |
-| Text Planning | Gemini 3 Flash | `gemini-3-flash-preview` |
+| Text + Image | Nano Banana 2 (Gemini 3.1 Flash Image) | `gemini-3.1-flash-image-preview` |
 | Backend | Node.js + tsx (plain `node:http`) | Node 22+ |
 | Frontend | React + Vite | React ^19.1.0, Vite ^6.3.5 |
 | AI SDK | @google/genai | ^1.11.0 |

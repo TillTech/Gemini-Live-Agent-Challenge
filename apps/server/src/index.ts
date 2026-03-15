@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { planWithGemini, isGeminiConfigured } from './gemini.js';
+import { planWithGemini, isGeminiConfigured, generateBrandImage } from './gemini.js';
 import {
     applyLiveWidgetTool,
     clearLiveVisibleWidgets,
@@ -16,9 +16,10 @@ import {
     subscribeLiveEvents,
     syncLiveAudioState,
     updateLiveVisibleWidgets,
+    setLiveToolHandler,
     type LiveStreamEvent
 } from './liveSession.js';
-import { applyAction, applyPlan, createInitialSnapshot, createMockPlan, createSmartPlan } from './scenario.js';
+import { applyAction, applyPlan, createInitialSnapshot, createMockPlan, createSmartPlan, updateLatestActionArgs } from './scenario.js';
 import type { ResponseMode, Snapshot } from './types.js';
 
 const port = Number(process.env.PORT ?? 8787);
@@ -68,26 +69,60 @@ function broadcastLiveEvent(event: LiveStreamEvent | { type: 'snapshot'; snapsho
     }
 }
 
+setLiveToolHandler((tool, args) => {
+    turnFunctionCalls.add(tool);
+    if (tool === 'clear_ui_widgets' && (!hasLiveVisibleWidgets() || !hasClearUiIntent(lastOperatorInput))) {
+        return 'No action needed. Continue with the operator request.';
+    }
+    applyLiveWidgetTool(tool);
+    const action = { tool, args: args as Record<string, string> };
+    applyAction(state, action);
+    broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+
+    if (tool === 'draft_email_campaign') {
+        const prompt = args.campaign || args.subject || 'A promotional hospitality email marketing campaign';
+        console.log('[IMAGE] Starting background image generation for:', prompt);
+        generateBrandImage(`A complete, fully designed marketing email layout for a premium hospitality brand. Include a mock brand logo at the top, a stunning hero photography image promoting: ${prompt}, followed by an elegant text layout describing the offer, a clear styled 'Call to Action' button, and a professional email footer containing social media icons and legal text. Professional UI/UX layout, high resolution, hyper-realistic web design.`).then((b64) => {
+            if (b64) {
+                console.log('[IMAGE] ✅ Image generated successfully, length:', b64.length);
+                updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
+                broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+            } else {
+                console.error('[IMAGE] ❌ generateBrandImage returned null');
+            }
+        }).catch((err) => console.error('[IMAGE] ❌ Promise rejected:', err));
+        return 'Email drafting started in the background. Tell the user to review the preview on screen and ask if they are happy to send it.';
+    }
+
+    if (tool === 'dispatch_email_campaign') {
+        return 'Email dispatched successfully. Inform the user it has been sent.';
+    }
+    
+    if (tool === 'draft_sms_campaign' || tool === 'draft_marketing_push') {
+        return 'Drafting started. Tell the user to review the preview on screen and ask if they are happy to send it.';
+    }
+
+    if (tool === 'dispatch_sms_campaign' || tool === 'dispatch_marketing_push') {
+        return 'Campaign dispatched successfully. Inform the user it has been sent.';
+    }
+
+    // Pass the newly populated panel data back to the voice model so it has context to talk about
+    const latestAction = state.actions[0];
+    if (latestAction && latestAction.domain) {
+        const panel = state.panels.find(p => p.id === latestAction.domain);
+        if (panel) {
+            return `Action completed. Screen updated. Live data for this domain (${panel.label}): ${panel.value} - ${panel.detail}`;
+        }
+    }
+
+    return 'Action completed successfully and updated on screen.';
+});
+
 subscribeLiveEvents((event) => {
     broadcastLiveEvent(event);
 
     if (event.type === 'input_transcript' && event.final) {
         lastOperatorInput = event.text;
-        syncLiveAudioState(state, true);
-    }
-
-    // Track tools already called via function_call during this turn
-    if (event.type === 'function_call') {
-        turnFunctionCalls.add(event.name);
-        if (event.name === 'clear_ui_widgets' && (!hasLiveVisibleWidgets() || !hasClearUiIntent(lastOperatorInput))) {
-            syncLiveAudioState(state);
-            return;
-        }
-        applyLiveWidgetTool(event.name);
-        const action = { tool: event.name, args: event.args as Record<string, string> };
-        applyAction(state, action);
-        broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-        syncLiveAudioState(state);
     }
 
     // When a live voice turn completes, determine actions via multiple fallback paths
@@ -125,6 +160,22 @@ subscribeLiveEvents((event) => {
             state = applyPlan(state, inp, plan, 'live');
             for (const action of plan.actions) {
                 applyLiveWidgetTool(action.tool);
+
+                // Trigger background image generation for email drafts from Tier 2/3 paths
+                // (Tier 1 tool handler already has its own trigger)
+                if (action.tool === 'draft_email_campaign' && !turnFunctionCalls.has('draft_email_campaign')) {
+                    const prompt = action.args?.campaign || action.args?.subject || 'A promotional hospitality email marketing campaign';
+                    console.log('[IMAGE] Tier 2/3 triggered image generation for:', prompt);
+                    generateBrandImage(`A complete, fully designed marketing email layout for a premium hospitality brand. Include a mock brand logo at the top, a stunning hero photography image promoting: ${prompt}, followed by an elegant text layout describing the offer, a clear styled 'Call to Action' button, and a professional email footer containing social media icons and legal text. Professional UI/UX layout, high resolution, hyper-realistic web design.`).then((b64) => {
+                        if (b64) {
+                            console.log('[IMAGE] ✅ Image generated successfully, length:', b64.length);
+                            updateLatestActionArgs(state, 'email_campaigns', { imageUrl: b64 });
+                            broadcastLiveEvent({ type: 'snapshot', snapshot: state });
+                        } else {
+                            console.error('[IMAGE] ❌ generateBrandImage returned null');
+                        }
+                    }).catch((err) => console.error('[IMAGE] ❌ Promise rejected:', err));
+                }
             }
             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
             syncLiveAudioState(state);
@@ -227,6 +278,7 @@ const server = http.createServer((request, response) => {
             sendJson(response, state);
             return;
         }
+
 
         if (request.method === 'GET' && request.url === '/api/config') {
             sendJson(response, {

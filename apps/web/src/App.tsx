@@ -19,7 +19,7 @@ type SpeechRecognitionLike = EventTarget & {
     start: () => void; stop: () => void;
 };
 
-type ActionItem = { id: string; title: string; status: 'done' | 'pending'; domain: string; detail: string };
+type ActionItem = { id: string; title: string; status: 'done' | 'pending' | 'draft'; domain: string; detail: string; args?: Record<string, string> };
 type PanelState = { id: string; label: string; value: string; detail: string; tone: 'stable' | 'warn' | 'critical' | 'boost'; metric: string };
 type HeroStat = { id: string; label: string; value: string };
 type TranscriptEntry = { id: string; role: 'system' | 'operator' | 'tilly'; text: string; timestamp: string };
@@ -198,6 +198,7 @@ export function App() {
     const dismissedCheckToolsRef = useRef<Set<string>>(new Set());
     const esReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const esManualCloseRef = useRef(false);
+    const greetPendingRef = useRef(false);
 
     const domainToolMap: Record<string, string> = {
         delivery_drivers: 'check_driver_status', customer_comms: 'send_customer_apology',
@@ -207,8 +208,8 @@ export function App() {
         push_notifications: 'send_marketing_push', supplier_orders: 'reorder_supplier_item',
         distribution: 'check_distribution_status', warehouse_stock: 'check_warehouse_stock',
         costings: 'check_costings', wastage: 'check_wastage',
-        kitchen_stations: 'check_kitchen_stations', email_campaigns: 'send_email_campaign',
-        sms_campaigns: 'send_sms_campaign', engagement: 'check_engagement',
+        kitchen_stations: 'check_kitchen_stations', email_campaigns: 'dispatch_email_campaign',
+        sms_campaigns: 'dispatch_sms_campaign', engagement: 'check_engagement',
         rotas: 'check_rotas', staff_stations: 'check_staff_stations',
         performance: 'check_performance', payments: 'check_payments',
         reports: 'generate_report', accounts: 'check_accounts',
@@ -216,11 +217,11 @@ export function App() {
 
     function resolveActionTool(action: ActionItem) {
         const t = action.title.toLowerCase();
-        if (t.includes('push') || t.includes('qr')) return 'send_marketing_push';
+        if (t.includes('push') || t.includes('qr')) return action.status === 'draft' ? 'draft_marketing_push' : 'dispatch_marketing_push';
         if (t.includes('reorder') || t.includes('supplier')) return 'reorder_supplier_item';
         if (t.includes('route') || t.includes('optimi')) return 'optimise_driver_routes';
-        if (t.includes('email campaign')) return 'send_email_campaign';
-        if (t.includes('sms campaign')) return 'send_sms_campaign';
+        if (t.includes('email campaign')) return action.status === 'draft' ? 'draft_email_campaign' : 'dispatch_email_campaign';
+        if (t.includes('sms campaign')) return action.status === 'draft' ? 'draft_sms_campaign' : 'dispatch_sms_campaign';
         if (t.includes('report')) return 'generate_report';
         if (t.includes('distribution')) return 'check_distribution_status';
         if (t.includes('warehouse')) return 'check_warehouse_stock';
@@ -507,6 +508,18 @@ export function App() {
                         upsertVizCard(tool, (a as any).args ?? {});
                     }
                 }
+                
+                // Sync args for currently visible cards (handles async updates like image generation)
+                setActiveViz(prev => prev.map(viz => {
+                    const snapAction = p.snapshot.actions.find(a => (a as any).tool === viz.tool || a.domain === domainToolMap[viz.tool] || a.domain === viz.tool.replace('send_', '').replace('check_', ''));
+                    // We can just find the action by tool name using the same resolve logic
+                    const mappedSnapAction = p.snapshot.actions.find(a => resolveActionTool(a) === viz.tool);
+                    if (mappedSnapAction && mappedSnapAction.args && JSON.stringify(mappedSnapAction.args) !== JSON.stringify(viz.args)) {
+                        return { ...viz, args: { ...viz.args, ...mappedSnapAction.args } };
+                    }
+                    return viz;
+                }));
+
                 setSnap(p.snapshot);
                 setStatus('ok');
                 setLiveIn('');
@@ -608,6 +621,7 @@ export function App() {
                 scheduledSourcesRef.current += 1;
                 playingRef.current = true;
                 setSpeaking(true);
+                greetPendingRef.current = false;
 
                 src.onended = () => {
                     scheduledSourcesRef.current = Math.max(0, scheduledSourcesRef.current - 1);
@@ -656,6 +670,7 @@ export function App() {
     }
 
     async function startLive() {
+        greetPendingRef.current = true;
         openES(); setErr(''); setLiveState('connecting'); stoppedRef.current = false;
         try {
             const tools = activeViz.map((viz) => viz.tool);
@@ -694,10 +709,10 @@ export function App() {
 
     async function stopLive() {
         setListening(false);
-        // Stop local playback and microphone capture, but keep the live session open for continuity.
         drainAudioQ();
-        await teardown(true);
-        setLiveState('waiting');
+        await teardown(false);
+        await fetch(`${API}/api/live/session/close`, { method: 'POST' }).catch(() => undefined);
+        setLiveState('idle');
         setLiveIn('');
         setInterim('');
     }
@@ -820,14 +835,21 @@ export function App() {
     // Determine the real conversational state
     const isLive = listening || ['capturing', 'connected', 'waiting', 'speaking', 'interrupted', 'processing'].includes(liveState);
     const isSpeaking = speaking || liveState === 'speaking' || playingRef.current;
+    
+    // Connecting = User clicked start, but mic stream and WebSockets are still authenticating
+    const isConnecting = liveState === 'connecting' || (liveState === 'capturing' && !listening) || (!listening && greetPendingRef.current);
+
+    // Initial greeting period before audio plays
+    const isGreeting = greetPendingRef.current && listening && !speaking;
+
     // Processing = user has spoken (liveIn is set), Tilly hasn't started her audio response yet
     const isProcessing = isLive && !isSpeaking && liveIn.length > 0 && liveOut.length === 0 && liveState === 'waiting';
     // Acting = server is executing tools after a completed turn
     const isActing = liveState === 'processing';
-    const orbState = isSpeaking ? 'speaking' : isActing ? 'acting' : isProcessing ? 'processing' : isLive ? 'listening' : 'idle';
-    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'acting' ? '⚡ Taking action' : orbState === 'processing' ? '◌ Processing' : orbState === 'listening' ? '● Listening' : '○ Click to talk or type';
-    const dotClass = status === 'off' ? 'offline' : isLive ? 'running' : '';
-    const statusText = !isLive ? 'Ready' : isSpeaking ? 'Speaking' : isActing ? 'Acting' : isProcessing ? 'Processing' : 'Listening';
+    const orbState = isConnecting ? 'connecting' : isGreeting ? 'speaking' : isSpeaking ? 'speaking' : isActing ? 'acting' : isProcessing ? 'processing' : isLive ? 'listening' : 'idle';
+    const orbTag = orbState === 'speaking' ? '◉ Tilly is speaking' : orbState === 'acting' ? '⚡ Taking action' : orbState === 'processing' ? '◌ Processing' : orbState === 'connecting' ? '◌ Waking up...' : orbState === 'listening' ? '● Listening' : '○ Click to talk or type';
+    const dotClass = status === 'off' ? 'offline' : isLive || isConnecting ? 'running' : '';
+    const statusText = (!isLive && !isConnecting) ? 'Ready' : isSpeaking || isGreeting ? 'Speaking' : isActing ? 'Acting' : isProcessing ? 'Processing' : orbState === 'connecting' ? 'Connecting' : 'Listening';
 
     return (
         <main className="shell">
@@ -1009,22 +1031,27 @@ export function App() {
                                         );
                                     case 'draft_promo':
                                         return (
-                                            <div key={v.id} className={`vizCard viz-promo ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
+                                            <div key={v.id} className={`vizCard viz-promo ${v.args.imageUrl ? 'has-image' : ''} ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms`, paddingBottom: v.args.imageUrl ? '8px' : '16px' }}>
                                                 <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📣</span>
                                                     <span className="vizTitle">Campaign Builder</span>
-                                                    <span className="vizStatus">Drafting</span>
+                                                    <span className="vizStatus">{v.args.imageUrl ? 'Ready' : 'Drafting'}</span>
                                                 </div>
-                                                <div className="promoCard">
-                                                    <div className="promoHeadline">{v.args.campaign || v.args.item || 'Promotion'}</div>
-                                                    <div className="promoOffer">{v.args.pct ? `${v.args.pct} OFF` : 'OFFER STAGED'}</div>
-                                                    <div className="promoMeta">
-                                                        <span className="promoTag">Campaign draft</span>
-                                                        {v.args.item && <span className="promoTag">{v.args.item}</span>}
-                                                        <span className="promoTag">In-app</span>
+                                                
+                                                {v.args.imageUrl ? (
+                                                    <img src={v.args.imageUrl} alt="Campaign Draft" style={{ width: '100%', height: 'auto', borderRadius: 'var(--radius-sm)', border: '1px solid var(--glass-border)', marginTop: 4 }} />
+                                                ) : (
+                                                    <div className="promoCard">
+                                                        <div className="promoHeadline" style={{ animation: 'pulse 1.5s infinite' }}>Generating Email Layout...</div>
+                                                        <div className="promoOffer" style={{ opacity: 0.5 }}>{v.args.pct ? `${v.args.pct} OFF` : 'OFFER STAGED'}</div>
+                                                        <div className="promoMeta">
+                                                            <span className="promoTag">Campaign draft</span>
+                                                            {v.args.item && <span className="promoTag">{v.args.item}</span>}
+                                                            <span className="promoTag">In-app</span>
+                                                        </div>
                                                     </div>
-                                                </div>
+                                                )}
                                             </div>
                                         );
                                     case 'send_marketing_push':
@@ -1274,18 +1301,40 @@ export function App() {
                                                 </div>
                                             </div>
                                         );
-                                    case 'send_email_campaign':
+                                    case 'draft_email_campaign':
+                                    case 'dispatch_email_campaign': {
+                                        const isDraft = v.tool === 'draft_email_campaign';
                                         return (
                                             <div key={v.id} className={`vizCard viz-push ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
                                                 <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">📧</span>
                                                     <span className="vizTitle">Email Campaign</span>
-                                                    <span className="vizStatus">Sent</span>
+                                                    <span className="vizStatus">{isDraft ? 'Draft' : 'Sent'}</span>
                                                 </div>
                                                 <div className="promoCard">
+                                                    {v.args.imageUrl ? (
+                                                        <div className="promoImage" style={{
+                                                            width: '100%', height: 120, borderRadius: 8, marginBottom: 12,
+                                                            backgroundImage: `url(${v.args.imageUrl})`, backgroundSize: 'cover',
+                                                            backgroundPosition: 'center', border: '1px solid var(--border)'
+                                                        }} />
+                                                    ) : (
+                                                        <div className="promoImagePlaceholder" style={{
+                                                            width: '100%', height: 120, borderRadius: 8, marginBottom: 12,
+                                                            background: 'var(--surface-sunken)', border: '1px dashed var(--border)',
+                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            color: 'var(--text-dim)', fontSize: '0.8rem',
+                                                            animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                                                            textAlign: 'center', padding: '0 10px'
+                                                        }}>
+                                                            Generating Email Layout...
+                                                        </div>
+                                                    )}
                                                     <div className="promoHeadline">{v.args.campaign || v.args.subject || 'Email Campaign'}</div>
-                                                    <div className="promoOffer">📬 DISPATCHED</div>
+                                                    <div className="promoOffer" style={{ color: isDraft ? 'var(--text-dim)' : undefined }}>
+                                                        {isDraft ? '⏳ AWAITING APPROVAL' : '📬 DISPATCHED'}
+                                                    </div>
                                                     <div className="promoMeta">
                                                         <span className="promoTag">Email</span>
                                                         <span className="promoTag">4,200 recipients</span>
@@ -1294,18 +1343,23 @@ export function App() {
                                                 </div>
                                             </div>
                                         );
-                                    case 'send_sms_campaign':
+                                    }
+                                    case 'draft_sms_campaign':
+                                    case 'dispatch_sms_campaign': {
+                                        const isDraft = v.tool === 'draft_sms_campaign';
                                         return (
                                             <div key={v.id} className={`vizCard viz-push ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>
                                                 <button className="vizCloseBtn" type="button" onClick={() => removeVizTool(v.tool)} aria-label="Close widget">x</button>
                                                 <div className="vizHead">
                                                     <span className="vizIcon">💬</span>
                                                     <span className="vizTitle">SMS Campaign</span>
-                                                    <span className="vizStatus">Sent</span>
+                                                    <span className="vizStatus">{isDraft ? 'Draft' : 'Sent'}</span>
                                                 </div>
                                                 <div className="promoCard">
                                                     <div className="promoHeadline">{v.args.campaign || v.args.message || 'SMS Blast'}</div>
-                                                    <div className="promoOffer">📱 DISPATCHED</div>
+                                                    <div className="promoOffer" style={{ color: isDraft ? 'var(--text-dim)' : undefined }}>
+                                                        {isDraft ? '⏳ AWAITING APPROVAL' : '📱 DISPATCHED'}
+                                                    </div>
                                                     <div className="promoMeta">
                                                         <span className="promoTag">SMS</span>
                                                         <span className="promoTag">2,800 recipients</span>
@@ -1314,6 +1368,7 @@ export function App() {
                                                 </div>
                                             </div>
                                         );
+                                    }
                                     case 'check_engagement':
                                         return (
                                             <div key={v.id} className={`vizCard viz-loyalty ${exiting ? 'exiting' : ''}`} style={{ animationDelay: `${vi * 100}ms` }}>

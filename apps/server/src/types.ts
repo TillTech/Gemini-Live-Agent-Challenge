@@ -12,7 +12,7 @@ export type TranscriptEntry = {
 export type ActionItem = {
     id: string;
     title: string;
-    status: 'done' | 'pending';
+    status: 'done' | 'pending' | 'draft';
     domain: string;
     detail: string;
     args?: Record<string, string>;
@@ -53,6 +53,7 @@ export type Snapshot = {
 export type PlannedAction = {
     tool: string;
     args?: Record<string, string>;
+    status?: ActionItem['status'];
 };
 
 export type AgentPlan = {

@@ -1,4 +1,4 @@
-import type { AgentPlan, PanelState, PlannedAction, Snapshot, TranscriptEntry } from './types.js';
+import type { ActionItem, AgentPlan, PanelState, PlannedAction, Snapshot, TranscriptEntry } from './types.js';
 
 function nowIso() {
     return new Date().toISOString();
@@ -32,44 +32,44 @@ export function createInitialSnapshot(liveReady: boolean): Snapshot {
         ],
         panels: [
             // 🚚 Delivery & Logistics
-            panel('delivery_drivers', 'Delivery Drivers', '1 delayed', 'Four evening drivers clocked in. One route affected by traffic.', 'warn', '15 min delay'),
-            panel('distribution', 'Distribution', '2 active runs', 'Central dispatch vans en route to stores on schedule.', 'stable', 'On schedule'),
-            panel('logistics', 'Logistics Overview', 'Traffic pressure', 'Live routing has one delayed leg; replans available.', 'warn', 'Congestion active'),
+            panel('delivery_drivers', 'Delivery Drivers', '—', 'Awaiting data', 'stable', '—'),
+            panel('distribution', 'Distribution', '—', 'Awaiting data', 'stable', '—'),
+            panel('logistics', 'Logistics Overview', '—', 'Awaiting data', 'stable', '—'),
 
             // 📦 Inventory & Stock
-            panel('store_stock', 'Store Stock', 'Fresh dough low', 'Fresh dough is below Friday safety threshold.', 'critical', '20 portions'),
-            panel('warehouse_stock', 'Warehouse Stock', 'Stable', 'Warehouse buffer stock healthy across core lines.', 'stable', 'All above threshold'),
-            panel('supplier_orders', 'Supplier Orders', 'No urgent PO', 'No immediate emergency reorder currently required.', 'stable', 'Queue clear'),
-            panel('costings', 'Costings', 'Loaded fries: £2.40', 'Margin currently healthy on featured add-on items.', 'stable', 'Margin healthy'),
-            panel('wastage', 'Wastage', '2 flags', 'Today\'s wastage within expected range.', 'warn', '£12 today'),
+            panel('store_stock', 'Store Stock', '—', 'Awaiting data', 'stable', '—'),
+            panel('warehouse_stock', 'Warehouse Stock', '—', 'Awaiting data', 'stable', '—'),
+            panel('supplier_orders', 'Supplier Orders', '—', 'Awaiting data', 'stable', '—'),
+            panel('costings', 'Costings', '—', 'Awaiting data', 'stable', '—'),
+            panel('wastage', 'Wastage', '—', 'Awaiting data', 'stable', '—'),
 
             // 🍳 Kitchen
-            panel('kitchen_flow', 'Kitchen Flow', 'Conservation watch', 'Prep decisions adjusted to protect dough usage.', 'warn', 'Active alert'),
-            panel('kitchen_stations', 'Stations', 'All covered', 'Grill, fryer, and expediting positions covered.', 'stable', '4 active'),
+            panel('kitchen_flow', 'Kitchen Flow', '—', 'Awaiting data', 'stable', '—'),
+            panel('kitchen_stations', 'Stations', '—', 'Awaiting data', 'stable', '—'),
 
             // 📣 Marketing & Campaigns
-            panel('promotions', 'Promotions', 'No active draft', 'No live promotional draft currently staged.', 'stable', 'Idle'),
-            panel('push_notifications', 'Push Notifications', 'Idle', 'No push broadcast has been sent this shift.', 'stable', '0 sent'),
-            panel('email_campaigns', 'Email Campaigns', 'Idle', 'No email campaign currently queued.', 'stable', '0 sent'),
-            panel('sms_campaigns', 'SMS Campaigns', 'Idle', 'No SMS campaign currently queued.', 'stable', '0 sent'),
+            panel('promotions', 'Promotions', '—', 'Awaiting data', 'stable', '—'),
+            panel('push_notifications', 'Push Notifications', '—', 'Awaiting data', 'stable', '—'),
+            panel('email_campaigns', 'Email Campaigns', '—', 'Awaiting data', 'stable', '—'),
+            panel('sms_campaigns', 'SMS Campaigns', '—', 'Awaiting data', 'stable', '—'),
 
             // 💰 Loyalty & Engagement
-            panel('loyalty', 'Loyalty', 'Comp policy ready', 'Loyalty compensation available for service recovery.', 'stable', 'Ready'),
-            panel('engagement', 'Games & Incentives', 'Live', 'Scratch & Win active for app users.', 'boost', '38 plays'),
+            panel('loyalty', 'Loyalty', '—', 'Awaiting data', 'stable', '—'),
+            panel('engagement', 'Games & Incentives', '—', 'Awaiting data', 'stable', '—'),
 
             // 👥 Customer Service
-            panel('customer_comms', 'Customer Comms', 'Queue clear', 'No unresolved customer comms escalations.', 'stable', '0 urgent'),
+            panel('customer_comms', 'Customer Comms', '—', 'Awaiting data', 'stable', '—'),
 
             // 👷 Staffing & HR
-            panel('rotas', 'Rotas & Schedules', 'Fully covered', 'Evening rota fully covered for next 48 hours.', 'stable', 'No gaps'),
-            panel('attendance', 'Attendance', '1 late arrival', 'Sarah clocked in 15 minutes late.', 'warn', '15 min late'),
-            panel('staff_stations', 'Staff Stations', '3 stations active', 'Station assignments confirmed across floor and kitchen.', 'stable', 'All covered'),
-            panel('performance', 'Performance', 'Team on track', 'Current shift KPIs tracking to target.', 'stable', 'Avg 92%'),
+            panel('rotas', 'Rotas & Schedules', '—', 'Awaiting data', 'stable', '—'),
+            panel('attendance', 'Attendance', '—', 'Awaiting data', 'stable', '—'),
+            panel('staff_stations', 'Staff Stations', '—', 'Awaiting data', 'stable', '—'),
+            panel('performance', 'Performance', '—', 'Awaiting data', 'stable', '—'),
 
             // 📊 Accounting & Reports
-            panel('payments', 'Payments', '147 today', 'Payment provider online with no failure spike.', 'stable', '£3,240'),
-            panel('reports', 'Reports', 'Sales summary', 'Most recent operational report available for review.', 'stable', 'Generated'),
-            panel('accounts', 'Accounts', 'VAT current', 'No overdue invoices currently flagged.', 'stable', 'All clear'),
+            panel('payments', 'Payments', '—', 'Awaiting data', 'stable', '—'),
+            panel('reports', 'Reports', '—', 'Awaiting data', 'stable', '—'),
+            panel('accounts', 'Accounts', '—', 'Awaiting data', 'stable', '—'),
         ],
         heroStats: [
             { id: 'coverage', label: 'Operational Domains', value: '8 areas • 24 panels' },
@@ -90,11 +90,11 @@ function updatePanel(panels: PanelState[], id: string, next: Partial<PanelState>
     return panels.map((entry) => (entry.id === id ? { ...entry, ...next } : entry));
 }
 
-function pushAction(snapshot: Snapshot, title: string, domain: string, detail: string, args?: Record<string, string>) {
+function pushAction(snapshot: Snapshot, title: string, domain: string, detail: string, args?: Record<string, string>, status: ActionItem['status'] = 'done') {
     const nextAction: Snapshot['actions'][number] = {
         id: `${domain}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         title,
-        status: 'done',
+        status,
         domain,
         detail,
         ...(args ? { args } : {})
@@ -337,7 +337,18 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
             pushAction(snapshot, 'Checked kitchen station assignments', 'kitchen_stations', info, args);
             break;
         }
-        case 'send_email_campaign': {
+        case 'draft_email_campaign': {
+            const subject = args.subject || args.campaign || 'Weekly offers';
+            snapshot.panels = updatePanel(snapshot.panels, 'email_campaigns', {
+                value: 'Drafting',
+                detail: `Drafting "${subject}" email campaign. Awaiting approval.`,
+                tone: 'stable',
+                metric: 'Draft'
+            });
+            pushAction(snapshot, `Drafting "${subject}" email campaign`, 'email_campaigns', 'Awaiting approval to dispatch.', args, 'draft');
+            break;
+        }
+        case 'dispatch_email_campaign': {
             const subject = args.subject || args.campaign || 'Weekly offers';
             snapshot.panels = updatePanel(snapshot.panels, 'email_campaigns', {
                 value: 'Campaign sent',
@@ -345,10 +356,29 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
                 tone: 'boost',
                 metric: args.recipients ? `${args.recipients} recipients` : 'Sent'
             });
-            pushAction(snapshot, `Sent "${subject}" email campaign`, 'email_campaigns', 'Email dispatched.', args);
+            // Also update the draft's status to done if it exists
+            const existing = snapshot.actions.find(a => a.domain === 'email_campaigns' && a.status === 'draft');
+            if (existing) {
+                existing.status = 'done';
+                existing.title = `Sent "${subject}" email campaign`;
+                existing.detail = 'Email dispatched.';
+            } else {
+                pushAction(snapshot, `Sent "${subject}" email campaign`, 'email_campaigns', 'Email dispatched.', args, 'done');
+            }
             break;
         }
-        case 'send_sms_campaign': {
+        case 'draft_sms_campaign': {
+            const msg = args.message || args.campaign || 'Weekend deals';
+            snapshot.panels = updatePanel(snapshot.panels, 'sms_campaigns', {
+                value: 'Drafting',
+                detail: `Drafting "${msg}" SMS campaign. Awaiting approval.`,
+                tone: 'stable',
+                metric: 'Draft'
+            });
+            pushAction(snapshot, `Drafting "${msg}" SMS campaign`, 'sms_campaigns', 'Awaiting approval to dispatch.', args, 'draft');
+            break;
+        }
+        case 'dispatch_sms_campaign': {
             const msg = args.message || args.campaign || 'Weekend deals';
             snapshot.panels = updatePanel(snapshot.panels, 'sms_campaigns', {
                 value: 'SMS sent',
@@ -356,7 +386,14 @@ export function applyAction(snapshot: Snapshot, action: PlannedAction) {
                 tone: 'boost',
                 metric: args.recipients ? `${args.recipients} recipients` : 'Sent'
             });
-            pushAction(snapshot, `Sent "${msg}" SMS campaign`, 'sms_campaigns', 'SMS dispatched.', args);
+            const existing = snapshot.actions.find(a => a.domain === 'sms_campaigns' && a.status === 'draft');
+            if (existing) {
+                existing.status = 'done';
+                existing.title = `Sent "${msg}" SMS campaign`;
+                existing.detail = 'SMS dispatched.';
+            } else {
+                pushAction(snapshot, `Sent "${msg}" SMS campaign`, 'sms_campaigns', 'SMS dispatched.', args, 'done');
+            }
             break;
         }
         case 'check_engagement': {
@@ -642,15 +679,15 @@ export function createSmartPlan(inputText: string, outputText: string, current: 
         actions.push({ tool: 'check_kitchen_stations' });
     }
 
-    // ── Email campaign: Tilly confirms email sent ──
+    // ── Email campaign: Tilly confirms email draft ──
     if (includesAny(out, ['email sent', 'email campaign', 'newsletter', 'email dispatched', 'sent the email'])) {
-        actions.push({ tool: 'send_email_campaign', args: { campaign: data.campaign } });
+        actions.push({ tool: 'draft_email_campaign', args: { campaign: data.campaign }, status: 'draft' });
     }
 
-    // ── SMS campaign: Tilly confirms SMS sent ──
+    // ── SMS campaign: Tilly confirms SMS draft ──
     if (includesAny(out, ['sms campaign', 'text message sent', 'sms sent', 'texted', 'text blast'])) {
         if (!actions.some(a => a.tool === 'send_customer_apology')) {
-            actions.push({ tool: 'send_sms_campaign', args: { campaign: data.campaign } });
+            actions.push({ tool: 'draft_sms_campaign', args: { campaign: data.campaign }, status: 'draft' });
         }
     }
 
@@ -766,6 +803,7 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     const text = prompt.toLowerCase();
     const data = extractData(prompt);
     const actions: PlannedAction[] = [];
+    let fallbackApplied = false;
 
     if (includesAny(text, ['clear ui', 'clear the ui', 'clear widgets', 'clear the widgets', 'clear screen', 'reset stage', 'clean slate', 'remove widgets'])) {
         actions.push({ tool: 'clear_ui_widgets' });
@@ -810,8 +848,21 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
     if (includesAny(text, ['push', 'notification', 'qr code', 'app users', 'send it'])) {
         actions.push({ tool: 'send_marketing_push', args: { campaign: data.campaign || data.item || 'promotion', pct: data.pct } });
     }
-    if (includesAny(text, ['email campaign', 'email blast', 'newsletter', 'send an email', 'email promotion'])) {
-        actions.push({ tool: 'send_email_campaign', args: { campaign: data.campaign || 'Weekly offers' } });
+    if (data.campaign && !actions.some((a) => a.tool.includes('draft_') || a.tool.includes('dispatch_'))) {
+        const low = text.toLowerCase();
+        if (/\b(email|e-mail)\b.*(?:campaign|promo|deal|offer)|(?:campaign|promo|deal|offer).*\b(email|e-mail)\b/i.test(low)) {
+            actions.push({ tool: 'draft_email_campaign', args: { campaign: data.campaign } });
+            fallbackApplied = true;
+        } else if (/\b(sms|text)\b.*(?:campaign|promo|deal|offer)|(?:campaign|promo|deal|offer).*\b(sms|text)\b/i.test(low)) {
+            actions.push({ tool: 'draft_sms_campaign', args: { message: data.campaign } });
+            fallbackApplied = true;
+        } else if (/\b(?:push|notification|app)\b.*(?:campaign|promo|deal|offer)|(?:campaign|promo|deal|offer).*\b(?:push|notification|app)\b/i.test(low)) {
+            actions.push({ tool: 'draft_marketing_push', args: { campaign: data.campaign } });
+            fallbackApplied = true;
+        } else if (data.campaign) {
+            actions.push({ tool: 'draft_promo', args: { campaign: data.campaign } });
+            fallbackApplied = true;
+        }
     }
     if (includesAny(text, ['sms campaign', 'sms blast', 'text all customers', 'text campaign', 'text message campaign'])) {
         actions.push({ tool: 'send_sms_campaign', args: { campaign: data.campaign || 'Weekend deals' } });
@@ -855,4 +906,11 @@ export function createMockPlan(prompt: string, current: Snapshot): AgentPlan {
         nextSuggestion: 'Ask Tilly to turn one of the highlighted issues into a concrete recovery action.',
         actions
     };
+}
+
+export function updateLatestActionArgs(snapshot: Snapshot, domain: string, newArgs: Record<string, string>) {
+    const act = snapshot.actions.find(a => a.domain === domain);
+    if (act) {
+        act.args = { ...(act.args ?? {}), ...newArgs };
+    }
 }

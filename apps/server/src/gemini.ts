@@ -83,7 +83,7 @@ export async function planWithGemini(prompt: string, snapshot: Snapshot): Promis
         return null;
     }
 
-    const model = process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview';
+    const model = process.env.GEMINI_MODEL ?? 'gemini-3.1-flash-image-preview';
     const client = buildClient();
 
     const transcript = snapshot.transcript.map((entry) => `${entry.role}: ${entry.text}`).join('\n');
@@ -117,4 +117,43 @@ export async function planWithGemini(prompt: string, snapshot: Snapshot): Promis
     } as never);
 
     return safeParsePlan(extractText(response));
+}
+
+export async function generateBrandImage(prompt: string): Promise<string | null> {
+    if (!isGeminiConfigured()) {
+        return null;
+    }
+
+    // IMPORTANT: Image generation requires a dedicated image-capable model.
+    // This MUST NOT share GEMINI_MODEL which may be a text-only model.
+    // Uses generateContent with responseModalities, NOT generateImages.
+    // See: https://ai.google.dev/gemini-api/docs/image-generation
+    const imageModel = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-3.1-flash-image-preview';
+
+    try {
+        const client = buildClient();
+        const response = await client.models.generateContent({
+            model: imageModel,
+            contents: prompt,
+            config: {
+                responseModalities: ['Text', 'Image'],
+            }
+        } as never);
+
+        const candidates = (response as any).candidates;
+        if (candidates && candidates.length > 0) {
+            const parts = candidates[0].content?.parts || [];
+            for (const part of parts) {
+                if (part.inlineData && part.inlineData.data) {
+                    const mimeType = part.inlineData.mimeType || 'image/png';
+                    return `data:${mimeType};base64,${part.inlineData.data}`;
+                }
+            }
+        }
+        console.error(`[generateBrandImage] No image data in ${imageModel} response.`);
+        return null;
+    } catch (error: any) {
+        console.error(`[generateBrandImage] ${imageModel} failed:`, error.message || error);
+        return null;
+    }
 }

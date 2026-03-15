@@ -97,6 +97,12 @@ let latestSnapshot: Snapshot | null = null;
 let liveTranscriptHistory: Array<{ role: 'operator' | 'tilly'; text: string }> = [];
 const liveDebug = process.env.LIVE_DEBUG === '1';
 
+let liveToolHandler: ((tool: string, args: Record<string, string>) => string) | null = null;
+
+export function setLiveToolHandler(handler: typeof liveToolHandler) {
+    liveToolHandler = handler;
+}
+
 const TOOL_LABELS: Record<string, string> = {
     get_ui_state: 'UI state',
     get_operational_state: 'Operational state',
@@ -106,7 +112,6 @@ const TOOL_LABELS: Record<string, string> = {
     check_inventory_status: 'Store stock',
     halt_kitchen_item: 'Kitchen override',
     draft_promo: 'Promotion draft',
-    send_marketing_push: 'Push broadcast',
     record_attendance_note: 'Attendance note',
     reorder_supplier_item: 'Supplier reorder',
     optimise_driver_routes: 'Route optimiser',
@@ -115,8 +120,12 @@ const TOOL_LABELS: Record<string, string> = {
     check_costings: 'Costings',
     check_wastage: 'Wastage',
     check_kitchen_stations: 'Kitchen stations',
-    send_email_campaign: 'Email campaign',
-    send_sms_campaign: 'SMS campaign',
+    draft_marketing_push: 'Push draft',
+    dispatch_marketing_push: 'Push broadcast',
+    draft_email_campaign: 'Email draft',
+    dispatch_email_campaign: 'Email campaign',
+    draft_sms_campaign: 'SMS draft',
+    dispatch_sms_campaign: 'SMS campaign',
     check_engagement: 'Engagement',
     check_rotas: 'Rotas',
     check_staff_stations: 'Staff stations',
@@ -492,14 +501,11 @@ function handleAudioMessage(event: AudioServerMessage) {
 
         for (const fc of event.toolCall.functionCalls) {
             if (fc.name === 'get_ui_state') {
-                const explicitUiStateQuery = hasUiStateIntent(latestInputTranscript);
                 responses.push({
                     id: fc.id,
                     name: fc.name,
                     response: {
-                        result: explicitUiStateQuery
-                            ? buildUiStateToolResult()
-                            : 'No explicit UI state request from the operator. Continue with the requested task.'
+                        result: buildUiStateToolResult()
                     }
                 });
                 continue;
@@ -515,15 +521,14 @@ function handleAudioMessage(event: AudioServerMessage) {
             }
 
             if (fc.name === 'clear_ui_widgets') {
-                const explicitIntent = hasExplicitClearUiIntent(latestInputTranscript);
                 const hasWidgets = visibleWidgetTools.length > 0;
-                if (!explicitIntent || !hasWidgets) {
-                    console.log('[LIVE] Ignoring clear_ui_widgets:', !hasWidgets ? 'already clear' : 'no explicit clear intent');
+                if (!hasWidgets) {
+                    console.log('[LIVE] Ignoring clear_ui_widgets:', 'already clear');
                     responses.push({
                         id: fc.id,
                         name: fc.name,
                         response: {
-                            result: 'No action needed. Continue with the operator request.'
+                            result: 'No action needed. The visual stage is already empty.'
                         }
                     });
                     continue;
@@ -537,7 +542,8 @@ function handleAudioMessage(event: AudioServerMessage) {
                 name: fc.name,
                 args: fc.args ?? {}
             });
-            responses.push({ id: fc.id, name: fc.name, response: { result: 'Action completed successfully.' } });
+            const resultMsg = liveToolHandler ? liveToolHandler(fc.name, (fc.args as Record<string, string>) ?? {}) : 'Action completed successfully.';
+            responses.push({ id: fc.id, name: fc.name, response: { result: resultMsg } });
         }
 
         // Send tool responses back so the model can continue speaking
@@ -670,13 +676,14 @@ export async function startLiveAudioSession(options?: { greet?: boolean }) {
                 'Maintain continuity across turns by using transcript history and current operator intent before starting a new topic.',
                 'Do not mention widget stage or UI visibility unless the operator explicitly asks about UI/screen/widget state.',
                 'When the operator does ask for UI/screen/widget state, call get_ui_state first and answer strictly from that tool result.',
-                'For factual operational details (counts, stock levels, delays, KPIs), call get_operational_state and use it as source of truth.',
-                'Do not invent figures. If data is missing from get_operational_state, say that clearly.',
+                'CRITICAL TOOL ROUTING: When asked to check a specific operational area (e.g., stock levels, drivers, rotas), you MUST call the specific domain tool (e.g. check_inventory_status, check_driver_status) FIRST to retrieve the live data and trigger the UI card.',
+                'Only call get_operational_state for a broad platform overview. Do NOT use it as a shortcut to check specific domains, because those UI panels only populate AFTER their specific tools are called.',
+                'CRITICAL: The domain tool response will immediately return the precise, updated data. Trust and speak that result instantly. Do NOT call get_operational_state or get_ui_state to verify a domain tool result, as the UI takes a moment to sync.',
                 'When asked what is on screen or which widgets are visible, report it from the latest "Visible UI widgets" state. Never say you cannot track UI/screen/widget state.',
                 'For UI state questions, list exactly the currently visible widgets from state and do not add inferred items.',
                 'Only mention that the stage is clear if the operator explicitly asks about current UI/widget visibility.',
-                'IMPORTANT BEHAVIOUR: When the operator asks you to take an action, gather the necessary details FIRST through natural conversation before calling the tool. For example, if they say "send a push notification", ask WHO it should go to, WHAT the offer is, and WHEN it should go out. If they say "halt a kitchen item", confirm WHICH item. Only call the tool once you have enough information. This makes the interaction feel professional and thorough.',
-                'When you DO call a tool, briefly tell the operator what you are doing - for example "OK, I am checking driver status now" or "Sending that apology SMS to the customer on order 4217". After the tool runs, confirm the result with specifics.',
+                'IMPORTANT BEHAVIOUR: When the operator asks you to take an action, gather the necessary details FIRST through natural conversation before calling the tool. For example, if they say "send a push notification", ask WHO it should go to, WHAT the offer is, and WHEN it should go out. If they say "halt a kitchen item", confirm WHICH item. Only call the tool once you have enough information.',
+                'When you DO call a tool, briefly tell the operator what you are doing (e.g., "I am checking that for you now"). After the tool runs, confirm the EXACT result returned by that tool.',
                 'Never call clear_ui_widgets unless the operator explicitly asks to clear, reset, declutter, or remove widgets/screen. Otherwise, keep existing widgets and append or update only what is needed.',
                 'You have access to these operational domains: Drivers and delivery tracking. Inventory and stock monitoring in the prep kitchen. Kitchen flow control including halting items. Customer communications including SMS apologies and loyalty point credits. Marketing campaigns including drafting promos and sending push notifications to app users. Staff attendance tracking. Delivery route optimisation.',
                 'Keep spoken responses short enough for a live demo under 4 minutes. Do not ramble. Be decisive and operational.'
@@ -717,7 +724,8 @@ export async function startLiveAudioSession(options?: { greet?: boolean }) {
                     { name: 'check_inventory_status', description: 'Check current inventory and stock levels in the prep kitchen.' },
                     { name: 'halt_kitchen_item', description: 'Halt preparation of a specific menu item to conserve ingredients.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'The menu item to halt, e.g. garlic bread' } }, required: ['item'] } },
                     { name: 'draft_promo', description: 'Draft a targeted promotional campaign.', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Description of the promotion' } }, required: ['campaign'] } },
-                    { name: 'send_marketing_push', description: 'Send a push notification promotion to all branded mobile app users.' },
+                    { name: 'draft_marketing_push', description: 'Draft a push notification promotion for mobile app users.', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Description of the promotion' } }, required: ['campaign'] } },
+                    { name: 'dispatch_marketing_push', description: 'Dispatch a previously drafted push notification promotion (ONLY use after user approval).', parameters: { type: 'OBJECT', properties: { campaign: { type: 'STRING', description: 'Description of the promotion' } }, required: ['campaign'] } },
                     { name: 'record_attendance_note', description: 'Record a staff attendance exception such as lateness.', parameters: { type: 'OBJECT', properties: { staff: { type: 'STRING', description: 'Staff member name' }, note: { type: 'STRING', description: 'Attendance note' } } } },
                     { name: 'reorder_supplier_item', description: 'Place a reorder with the primary supplier for a low-stock item.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Item to reorder' } } } },
                     { name: 'optimise_driver_routes', description: 'Optimise active delivery routes based on current traffic conditions.' },
@@ -726,8 +734,10 @@ export async function startLiveAudioSession(options?: { greet?: boolean }) {
                     { name: 'check_costings', description: 'Check cost per dish, food cost breakdowns, margins.', parameters: { type: 'OBJECT', properties: { item: { type: 'STRING', description: 'Menu item to check costing for' } } } },
                     { name: 'check_wastage', description: 'Check food wastage reports and waste tracking data.' },
                     { name: 'check_kitchen_stations', description: 'Check kitchen station assignments - grill, fryer, expediting, line positions.' },
-                    { name: 'send_email_campaign', description: 'Create and send a branded email campaign to mailing list.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Email subject/campaign name' } } } },
-                    { name: 'send_sms_campaign', description: 'Create and send an SMS text campaign to customers.', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'SMS campaign message' } } } },
+                    { name: 'draft_email_campaign', description: 'Draft a branded email campaign.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Email subject/campaign name' } } } },
+                    { name: 'dispatch_email_campaign', description: 'Dispatch a drafted email campaign (ONLY use after user approval).', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Email subject/campaign name' } } } },
+                    { name: 'draft_sms_campaign', description: 'Draft an SMS text campaign.', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'SMS campaign message' } } } },
+                    { name: 'dispatch_sms_campaign', description: 'Dispatch a drafted SMS campaign (ONLY use after user approval).', parameters: { type: 'OBJECT', properties: { message: { type: 'STRING', description: 'SMS campaign message' } } } },
                     { name: 'check_engagement', description: 'Check in-app engagement games status - plays, prizes, participation.' },
                     { name: 'check_rotas', description: 'Check staff rotas, shift schedules, and coverage gaps.' },
                     { name: 'check_staff_stations', description: 'Check staff station assignments across kitchen, warehouse, and management areas.' },
