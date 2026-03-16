@@ -74,7 +74,7 @@ A single continuous voice conversation during a live shift:
 | Backend | Node.js (native `node:http`) | Node 22+ |
 | Frontend | React + Vite | React ^19.1.0, Vite ^6.3.5 |
 | AI SDK | @google/genai | ^1.45.0 |
-| Infra | Google Cloud Run | Terraform |
+| Infra | Google Cloud Run | GitHub Actions |
 | Design | CSS custom properties | Dark/light theme tokens |
 
 <br/>
@@ -122,7 +122,6 @@ apps/
     App.tsx           — Single-component UI with voice orb, viz cards, and dashboard
     styles.css        — Design system with dark/light theme tokens
 docs/                 — Architecture diagram and model references
-infra/                — Cloud Run Terraform config + Dockerfile
 ```
 
 <br/>
@@ -141,7 +140,7 @@ infra/                — Cloud Run Terraform config + Dockerfile
 
 ## Deployment
 
-Cloud Run deployment via Terraform in [`infra/`](infra/).
+Cloud Run deployment is automated via GitHub Actions workflows in [`.github/workflows/`](.github/workflows/).
 
 ```bash
 pnpm -r build
@@ -248,7 +247,6 @@ Inspired by [TillTech](https://till.tech)'s real-world hospitality operations pl
 Tilly is actually a slice of a much deeper stack — an orchestrator-based system with field-relative experts and specific action sub-agents. For this hackathon, we wanted to showcase how you can take this conversational orchestrator approach and use it to take meaningful, complex actions within your business.
 
 See also:
-- [ARCHITECTURE.md](ARCHITECTURE.md) — system design and delivery phases
 
 ---
 
