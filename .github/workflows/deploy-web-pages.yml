@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - apps/web/**
+      - docs/**
+      - README.md
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
