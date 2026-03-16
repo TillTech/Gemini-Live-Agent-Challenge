@@ -54,7 +54,7 @@ All actions update the state via SSE — panels, action timeline, and centre-sta
 
 ## Demo Flow
 
-A single continuous voice conversation during a live shift — taken from the actual [demo script](docs/demo-script.md):
+A single continuous voice conversation during a live shift:
 
 | Turn | Operator Says | Tilly Does |
 |------|---------------|------------|
@@ -121,7 +121,7 @@ apps/
   web/src/
     App.tsx           — Single-component UI with voice orb, viz cards, and dashboard
     styles.css        — Design system with dark/light theme tokens
-docs/                 — Demo script, brand story, architecture diagram, submission drafts
+docs/                 — Architecture diagram and model references
 infra/                — Cloud Run Terraform config + Dockerfile
 ```
 
@@ -141,7 +141,7 @@ infra/                — Cloud Run Terraform config + Dockerfile
 
 ## Deployment
 
-Cloud Run deployment via Terraform in [`infra/`](infra/). See [`docs/`](docs/) for competition submission guidelines and cloud proof checklist.
+Cloud Run deployment via Terraform in [`infra/`](infra/).
 
 ```bash
 pnpm -r build
@@ -237,7 +237,7 @@ The system uses three detection methods — you can observe them in the terminal
 
 ## Data
 
-This project uses **synthetic demo data** shaped to reflect real hospitality workflows. No private customer, financial, or production data is included. See [docs/public-data-policy.md](docs/public-data-policy.md).
+This project uses **synthetic demo data** shaped to reflect real hospitality workflows. No private customer, financial, or production data is included.
 
 <br/>
 
@@ -249,8 +249,6 @@ Tilly is actually a slice of a much deeper stack — an orchestrator-based syste
 
 See also:
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and delivery phases
-- [docs/demo-script.md](docs/demo-script.md) — full demo walk-through
-- [docs/brand-story.md](docs/brand-story.md) — positioning and tone
 
 ---
 
