@@ -28,8 +28,14 @@ jobs:
           import sys
 
           path_allowlist = {'.env.example'}
+          binary_probe_bytes = 8192
+          suspicious_path_patterns = (
+              r'\.env(\..*)?',
+              r'.*\.(pem|key|p12|pfx|crt|cer)',
+              r'.*(credentials|service-account).+\.json',
+          )
           path_pattern = re.compile(
-              r'(^|/)(\.env(\.|$)?|.*\.(pem|key|p12|pfx|crt|cer)|.*(credentials|service-account).+\.json)$',
+              rf'(^|/)({"|".join(suspicious_path_patterns)})$',
               re.IGNORECASE,
           )
           content_patterns = {
@@ -62,7 +68,8 @@ jobs:
               except subprocess.CalledProcessError:
                   continue
 
-              if b'\x00' in blob[:8192]:
+              # Files with null bytes in the first 8 KiB are treated as binary and skipped.
+              if b'\x00' in blob[:binary_probe_bytes]:
                   continue
 
               matches = [name for name, pattern in content_patterns.items() if pattern.search(blob)]
