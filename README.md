@@ -146,6 +146,14 @@ Cloud Run deployment is automated via GitHub Actions workflows in [`.github/work
 pnpm -r build
 ```
 
+Before making the repository public, make sure deployment secrets stay in GitHub or Google Cloud and never in git-tracked files:
+
+- Keep local credentials only in ignored files such as `.env`, `.env.local`, or other `.env.*` files
+- Store `GCP_SA_KEY`, `GCP_PROJECT_ID`, and `GOOGLE_API_KEY` in GitHub repository or environment secrets
+- Rotate any cloud credentials immediately if they are ever pasted into a tracked file or workflow log
+- Run the **Public Release Audit** workflow (or let it run in CI) to scan the full git history for known secret patterns before publishing
+- Prefer Vertex AI or Secret Manager-backed runtime configuration for long-lived production deployments when possible
+
 <br/>
 
 ## Reproducible Testing Instructions
