@@ -28,7 +28,7 @@ This is **not a chatbot**. The centre of the experience is a live operations can
 
 <div align="center">
 
-![Architecture Diagram](docs/architecture-diagram.png)
+![Architecture Diagram](docs/architecture-diagram.jpg)
 
 </div>
 
