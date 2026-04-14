@@ -32,6 +32,11 @@ const DEFAULT_ALLOWED_ORIGINS = [
     'http://127.0.0.1:5173',
     'https://tilltech.github.io'
 ];
+const ALLOWED_AUDIO_MIME_TYPES = new Set([
+    'audio/pcm',
+    'audio/pcm;rate=16000',
+    'audio/pcm;rate=24000'
+]);
 
 let state = createInitialSnapshot(liveReady);
 const liveEventClients = new Set<http.ServerResponse>();
@@ -106,9 +111,9 @@ function buildResponseHeaders(request: http.IncomingMessage, headers: Record<str
         ...headers,
         'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        'Content-Security-Policy': "frame-ancestors 'none'; base-uri 'none'",
         'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Resource-Policy': 'same-site',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
         'Referrer-Policy': 'no-referrer',
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY'
@@ -214,11 +219,11 @@ function sanitiseToolList(tools: unknown) {
 }
 
 function isLikelyBase64(value: string) {
-    return /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+    return value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
 function isAllowedAudioMimeType(value: string) {
-    return /^audio\/[A-Za-z0-9.+-]+(?:\s*;\s*[A-Za-z0-9-]+=[A-Za-z0-9.+-]+)*$/.test(value);
+    return ALLOWED_AUDIO_MIME_TYPES.has(value.toLowerCase().replace(/\s+/g, ''));
 }
 
 function hasClearUiIntent(text: string) {
