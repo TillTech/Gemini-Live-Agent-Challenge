@@ -219,7 +219,7 @@ function sanitiseToolList(tools: unknown) {
 }
 
 function isLikelyBase64(value: string) {
-    return value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+    return value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
 function isAllowedAudioMimeType(value: string) {
