@@ -25,6 +25,18 @@ import type { ResponseMode, Snapshot } from './types.js';
 const port = Number(process.env.PORT ?? 8787);
 const liveReady = isGeminiConfigured();
 const liveSessionReady = isLiveConfigured();
+const MAX_JSON_BODY_BYTES = 1024 * 1024;
+const MAX_AUDIO_BASE64_CHARS = 512 * 1024;
+const DEFAULT_ALLOWED_ORIGINS = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'https://tilltech.github.io'
+];
+const ALLOWED_AUDIO_MIME_TYPES = new Set([
+    'audio/pcm',
+    'audio/pcm;rate=16000',
+    'audio/pcm;rate=24000'
+]);
 
 let state = createInitialSnapshot(liveReady);
 const liveEventClients = new Set<http.ServerResponse>();
@@ -40,6 +52,179 @@ const INFO_TOOLS = new Set([
     'check_payments', 'check_accounts', 'check_costings', 'generate_report',
     'clear_ui_widgets'
 ]);
+const KNOWN_TOOLS = new Set([
+    'get_ui_state',
+    'get_operational_state',
+    ...INFO_TOOLS,
+    'send_customer_apology',
+    'add_loyalty_points',
+    'halt_kitchen_item',
+    'draft_promo',
+    'record_attendance_note',
+    'reorder_supplier_item',
+    'optimise_driver_routes',
+    'draft_marketing_push',
+    'dispatch_marketing_push',
+    'draft_email_campaign',
+    'dispatch_email_campaign',
+    'draft_sms_campaign',
+    'dispatch_sms_campaign',
+    'check_performance'
+]);
+
+type RequestError = Error & { statusCode: number };
+type WidgetPayloadInput = {
+    tool: string;
+    title?: string;
+    summary?: string;
+    facts?: string[];
+    args?: Record<string, string>;
+};
+
+function createRequestError(message: string, statusCode: number): RequestError {
+    const error = new Error(message) as RequestError;
+    error.statusCode = statusCode;
+    return error;
+}
+
+function getAllowedOrigins() {
+    const configuredOrigins = (process.env.ALLOWED_ORIGINS ?? '')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+
+    return Array.from(new Set([...DEFAULT_ALLOWED_ORIGINS, ...configuredOrigins]));
+}
+
+function getCorsOrigin(request: http.IncomingMessage) {
+    const origin = request.headers.origin?.trim();
+    if (!origin) {
+        return null;
+    }
+
+    return getAllowedOrigins().includes(origin) ? origin : null;
+}
+
+function buildResponseHeaders(request: http.IncomingMessage, headers: Record<string, string>) {
+    const origin = getCorsOrigin(request);
+    const responseHeaders: Record<string, string> = {
+        ...headers,
+        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Content-Security-Policy': "frame-ancestors 'none'; base-uri 'none'",
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY'
+    };
+
+    if (origin) {
+        responseHeaders['Access-Control-Allow-Origin'] = origin;
+        responseHeaders.Vary = 'Origin';
+    }
+
+    const forwardedProto = request.headers['x-forwarded-proto'];
+    const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+    if (proto?.split(',')[0]?.trim() === 'https') {
+        responseHeaders['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
+    }
+
+    return responseHeaders;
+}
+
+function assertAllowedOrigin(request: http.IncomingMessage) {
+    if (request.headers.origin && !getCorsOrigin(request)) {
+        throw createRequestError('Origin is not allowed.', 403);
+    }
+}
+
+function normaliseToolName(tool: unknown) {
+    if (typeof tool !== 'string') {
+        return null;
+    }
+
+    const trimmed = tool.trim();
+    return KNOWN_TOOLS.has(trimmed) ? trimmed : null;
+}
+
+function sanitiseString(value: unknown, maxLength = 500) {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, maxLength) : null;
+}
+
+function sanitiseStringRecord(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+    }
+
+    const entries: Array<[string, string]> = [];
+    for (const [key, entry] of Object.entries(value)) {
+        const sanitised = sanitiseString(entry, 1000);
+        if (sanitised) {
+            entries.push([key, sanitised]);
+        }
+    }
+
+    return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function sanitiseWidgetPayloads(payloads: unknown): WidgetPayloadInput[] | undefined {
+    if (!Array.isArray(payloads)) {
+        return undefined;
+    }
+
+    const sanitisedPayloads: WidgetPayloadInput[] = [];
+    for (const payload of payloads) {
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            continue;
+        }
+
+        const tool = normaliseToolName((payload as { tool?: unknown }).tool);
+        if (!tool) {
+            continue;
+        }
+
+        const facts = Array.isArray((payload as { facts?: unknown }).facts)
+            ? (payload as { facts: unknown[] }).facts
+                .map((fact) => sanitiseString(fact, 300))
+                .filter((fact): fact is string => Boolean(fact))
+                .slice(0, 12)
+            : undefined;
+
+        sanitisedPayloads.push({
+            tool,
+            title: sanitiseString((payload as { title?: unknown }).title, 120) ?? undefined,
+            summary: sanitiseString((payload as { summary?: unknown }).summary, 400) ?? undefined,
+            facts,
+            args: sanitiseStringRecord((payload as { args?: unknown }).args)
+        });
+    }
+
+    return sanitisedPayloads;
+}
+
+function sanitiseToolList(tools: unknown) {
+    if (!Array.isArray(tools)) {
+        return [];
+    }
+
+    return tools
+        .map((tool) => normaliseToolName(tool))
+        .filter((tool): tool is string => Boolean(tool));
+}
+
+function isLikelyBase64(value: string) {
+    return value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+}
+
+function isAllowedAudioMimeType(value: string) {
+    return ALLOWED_AUDIO_MIME_TYPES.has(value.toLowerCase().replace(/\s+/g, ''));
+}
 
 function hasClearUiIntent(text: string) {
     const t = text.toLowerCase();
@@ -71,17 +256,23 @@ function broadcastLiveEvent(event: LiveStreamEvent | { type: 'snapshot'; snapsho
 }
 
 setLiveToolHandler((tool, args) => {
-    turnFunctionCalls.add(tool);
-    if (tool === 'clear_ui_widgets' && (!hasLiveVisibleWidgets() || !hasClearUiIntent(lastOperatorInput))) {
+    const safeTool = normaliseToolName(tool);
+    if (!safeTool || safeTool === 'get_ui_state' || safeTool === 'get_operational_state') {
+        return 'Unsupported tool request ignored.';
+    }
+
+    const safeArgs = sanitiseStringRecord(args);
+    turnFunctionCalls.add(safeTool);
+    if (safeTool === 'clear_ui_widgets' && (!hasLiveVisibleWidgets() || !hasClearUiIntent(lastOperatorInput))) {
         return 'No action needed. Continue with the operator request.';
     }
-    applyLiveWidgetTool(tool);
-    const action = { tool, args: args as Record<string, string> };
+    applyLiveWidgetTool(safeTool);
+    const action = { tool: safeTool, args: safeArgs };
     applyAction(state, action);
     broadcastLiveEvent({ type: 'snapshot', snapshot: state });
 
-    if (tool === 'draft_email_campaign') {
-        const prompt = args.campaign || args.subject || '';
+    if (safeTool === 'draft_email_campaign') {
+        const prompt = safeArgs.campaign || safeArgs.subject || '';
         // Only generate image if we have a meaningful campaign description (3+ words)
         const isPromptReady = prompt.trim().split(/\s+/).length >= 3;
         if (isPromptReady && !pendingImageGen) {
@@ -99,15 +290,15 @@ setLiveToolHandler((tool, args) => {
             : 'Email campaign created but needs more detail. Ask the user to confirm the full offer details (what discount, what product, any code) so you can finalise the email with a proper preview image.';
     }
 
-    if (tool === 'dispatch_email_campaign') {
+    if (safeTool === 'dispatch_email_campaign') {
         return 'Email dispatched successfully. Inform the user it has been sent.';
     }
     
-    if (tool === 'draft_sms_campaign' || tool === 'draft_marketing_push') {
+    if (safeTool === 'draft_sms_campaign' || safeTool === 'draft_marketing_push') {
         return 'Drafting started. Tell the user to review the preview on screen and ask if they are happy to send it.';
     }
 
-    if (tool === 'dispatch_sms_campaign' || tool === 'dispatch_marketing_push') {
+    if (safeTool === 'dispatch_sms_campaign' || safeTool === 'dispatch_marketing_push') {
         return 'Campaign dispatched successfully. Inform the user it has been sent.';
     }
 
@@ -185,28 +376,40 @@ subscribeLiveEvents((event) => {
     }
 });
 
-function sendJson(response: http.ServerResponse, payload: unknown, statusCode = 200) {
-    response.writeHead(statusCode, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type'
-    });
+function sendJson(request: http.IncomingMessage, response: http.ServerResponse, payload: unknown, statusCode = 200) {
+    response.writeHead(statusCode, buildResponseHeaders(request, {
+        'Content-Type': 'application/json; charset=utf-8'
+    }));
     response.end(JSON.stringify(payload));
 }
 
 async function readJsonBody<T>(request: http.IncomingMessage): Promise<T> {
+    const contentType = request.headers['content-type'];
+    if (contentType && !contentType.toLowerCase().startsWith('application/json')) {
+        throw createRequestError('Content-Type must be application/json.', 415);
+    }
+
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
 
     for await (const chunk of request) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalBytes += buffer.byteLength;
+        if (totalBytes > MAX_JSON_BODY_BYTES) {
+            throw createRequestError('Request body is too large.', 413);
+        }
+        chunks.push(buffer);
     }
 
     if (chunks.length === 0) {
         return {} as T;
     }
 
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
+    try {
+        return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
+    } catch {
+        throw createRequestError('Request body must be valid JSON.', 400);
+    }
 }
 
 function resolveMode(mode: ResponseMode | undefined): ResponseMode {
@@ -265,23 +468,26 @@ async function respondToPrompt(prompt: string, requestedMode: ResponseMode): Pro
 const server = http.createServer((request, response) => {
     void (async () => {
         if (!request.url) {
-            sendJson(response, { error: 'Missing URL' }, 400);
+            sendJson(request, response, { error: 'Missing URL' }, 400);
             return;
         }
 
         if (request.method === 'OPTIONS') {
-            sendJson(response, {});
+            assertAllowedOrigin(request);
+            sendJson(request, response, {});
             return;
         }
 
+        assertAllowedOrigin(request);
+
         if (request.method === 'GET' && request.url === '/api/state') {
-            sendJson(response, state);
+            sendJson(request, response, state);
             return;
         }
 
 
         if (request.method === 'GET' && request.url === '/api/config') {
-            sendJson(response, {
+            sendJson(request, response, {
                 liveReady,
                 liveSessionReady,
                 defaultMode: liveSessionReady ? 'live' : liveReady ? 'auto' : 'mock',
@@ -296,12 +502,11 @@ const server = http.createServer((request, response) => {
         }
 
         if (request.method === 'GET' && request.url === '/api/live/events') {
-            response.writeHead(200, {
+            response.writeHead(200, buildResponseHeaders(request, {
                 'Content-Type': 'text/event-stream',
                 'Cache-Control': 'no-cache, no-transform',
-                Connection: 'keep-alive',
-                'Access-Control-Allow-Origin': '*'
-            });
+                Connection: 'keep-alive'
+            }));
             response.write(`data: ${JSON.stringify({ type: 'snapshot', snapshot: state })}\n\n`);
             liveEventClients.add(response);
 
@@ -316,18 +521,18 @@ const server = http.createServer((request, response) => {
             const prompt = body.prompt?.trim();
 
             if (!prompt) {
-                sendJson(response, { error: 'Prompt is required.' }, 400);
+                sendJson(request, response, { error: 'Prompt is required.' }, 400);
                 return;
             }
 
             const nextState = await respondToPrompt(prompt, body.mode ?? 'auto');
             broadcastLiveEvent({ type: 'snapshot', snapshot: nextState });
-            sendJson(response, nextState);
+            sendJson(request, response, nextState);
             return;
         }
 
         if (request.method === 'POST' && request.url === '/api/live/session/start') {
-            const body = await readJsonBody<{ greet?: boolean; tools?: string[]; seq?: number; clientId?: string; widgets?: Array<{ tool: string; title?: string; summary?: string; facts?: string[]; args?: Record<string, string> }> }>(request);
+            const body = await readJsonBody<{ greet?: boolean; tools?: string[]; seq?: number; clientId?: string; widgets?: WidgetPayloadInput[] }>(request);
             const greet = Boolean(body.greet);
             // Reset state for each new session so stale drafts don't block new actions
             state = createInitialSnapshot(liveReady);
@@ -336,77 +541,93 @@ const server = http.createServer((request, response) => {
             lastOperatorInput = '';
             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
             if (Array.isArray(body.tools)) {
-                updateLiveVisibleWidgets(body.tools, body.seq, body.clientId, body.widgets);
+                updateLiveVisibleWidgets(sanitiseToolList(body.tools), body.seq, body.clientId, sanitiseWidgetPayloads(body.widgets));
             }
             const started = await startLiveAudioSession({ greet });
             if (!started) {
-                sendJson(response, { error: 'Live session is unavailable.' }, 503);
+                sendJson(request, response, { error: 'Live session is unavailable.' }, 503);
                 return;
             }
             syncLiveAudioState(state);
             if (greet) {
                 requestLiveGreeting();
             }
-            sendJson(response, { ok: true });
+            sendJson(request, response, { ok: true });
             return;
         }
 
         if (request.method === 'POST' && request.url === '/api/live/audio') {
             const body = await readJsonBody<{ audioBase64?: string; mimeType?: string }>(request);
 
-            if (!body.audioBase64 || !body.mimeType) {
-                sendJson(response, { error: 'audioBase64 and mimeType are required.' }, 400);
+        if (!body.audioBase64 || !body.mimeType) {
+            sendJson(request, response, { error: 'audioBase64 and mimeType are required.' }, 400);
+            return;
+        }
+
+        if (body.audioBase64.length > MAX_AUDIO_BASE64_CHARS) {
+            sendJson(request, response, { error: 'audioBase64 payload is invalid or too large.' }, 400);
+            return;
+        }
+
+        const audioBase64 = body.audioBase64.replace(/\s+/g, '');
+        if (!isLikelyBase64(audioBase64)) {
+            sendJson(request, response, { error: 'audioBase64 payload is invalid or too large.' }, 400);
+            return;
+        }
+
+            const mimeType = body.mimeType.trim();
+            if (!isAllowedAudioMimeType(mimeType)) {
+                sendJson(request, response, { error: 'mimeType must be a valid audio content type.' }, 400);
                 return;
             }
 
             try {
-                await sendLiveAudioChunk(body.audioBase64, body.mimeType, state);
+                await sendLiveAudioChunk(audioBase64, mimeType, state);
             } catch { /* session already closed — drop silently */ }
-            sendJson(response, { ok: true });
+            sendJson(request, response, { ok: true });
             return;
         }
 
         if (request.method === 'POST' && request.url === '/api/live/text') {
-            const body = await readJsonBody<{ text?: string; tools?: string[]; seq?: number; clientId?: string; widgets?: Array<{ tool: string; title?: string; summary?: string; facts?: string[]; args?: Record<string, string> }> }>(request);
+            const body = await readJsonBody<{ text?: string; tools?: string[]; seq?: number; clientId?: string; widgets?: WidgetPayloadInput[] }>(request);
             const text = body.text?.trim();
 
             if (!text) {
-                sendJson(response, { error: 'text is required.' }, 400);
+                sendJson(request, response, { error: 'text is required.' }, 400);
                 return;
             }
 
             if (Array.isArray(body.tools)) {
-                updateLiveVisibleWidgets(body.tools, body.seq, body.clientId, body.widgets);
+                updateLiveVisibleWidgets(sanitiseToolList(body.tools), body.seq, body.clientId, sanitiseWidgetPayloads(body.widgets));
                 syncLiveAudioState(state);
             }
 
             const sent = await sendLiveTextInput(text, state);
             if (!sent) {
-                sendJson(response, { error: 'Live session is unavailable.' }, 503);
+                sendJson(request, response, { error: 'Live session is unavailable.' }, 503);
                 return;
             }
-            sendJson(response, { ok: true });
+            sendJson(request, response, { ok: true });
             return;
         }
 
         if (request.method === 'POST' && request.url === '/api/live/ui/widgets') {
-            const body = await readJsonBody<{ tools?: string[]; seq?: number; clientId?: string; widgets?: Array<{ tool: string; title?: string; summary?: string; facts?: string[]; args?: Record<string, string> }> }>(request);
-            const tools = Array.isArray(body.tools) ? body.tools : [];
-            updateLiveVisibleWidgets(tools, body.seq, body.clientId, body.widgets);
+            const body = await readJsonBody<{ tools?: string[]; seq?: number; clientId?: string; widgets?: WidgetPayloadInput[] }>(request);
+            updateLiveVisibleWidgets(sanitiseToolList(body.tools), body.seq, body.clientId, sanitiseWidgetPayloads(body.widgets));
             syncLiveAudioState(state);
-            sendJson(response, { ok: true });
+            sendJson(request, response, { ok: true });
             return;
         }
 
         if (request.method === 'POST' && request.url === '/api/live/audio/stop') {
             await stopLiveAudioInput();
-            sendJson(response, { ok: true });
+            sendJson(request, response, { ok: true });
             return;
         }
 
         if (request.method === 'POST' && request.url === '/api/live/session/close') {
             closeLiveSession();
-            sendJson(response, { ok: true });
+            sendJson(request, response, { ok: true });
             return;
         }
 
@@ -416,14 +637,18 @@ const server = http.createServer((request, response) => {
             resetLiveTranscriptHistory();
             state = createInitialSnapshot(liveReady);
             broadcastLiveEvent({ type: 'snapshot', snapshot: state });
-            sendJson(response, state);
+            sendJson(request, response, state);
             return;
         }
 
-        sendJson(response, { error: 'Missing URL' }, 400);
+        sendJson(request, response, { error: 'Missing URL' }, 400);
     })().catch((error) => {
         console.error(error);
-        sendJson(response, { error: 'Internal server error' }, 500);
+        const statusCode = typeof (error as Partial<RequestError>)?.statusCode === 'number'
+            ? (error as RequestError).statusCode
+            : 500;
+        const message = statusCode === 500 ? 'Internal server error' : (error as Error).message;
+        sendJson(request, response, { error: message }, statusCode);
     });
 });
 

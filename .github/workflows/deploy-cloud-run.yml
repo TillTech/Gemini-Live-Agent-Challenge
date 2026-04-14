@@ -69,7 +69,7 @@ jobs:
             --region "$REGION" \
             --platform managed \
             --allow-unauthenticated \
-            --set-env-vars "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }},GOOGLE_CLOUD_PROJECT=${{ secrets.GCP_PROJECT_ID }},GOOGLE_CLOUD_REGION=${{ env.REGION }},GEMINI_LIVE_MODEL=gemini-2.5-flash-native-audio-preview-12-2025,GEMINI_MODEL=gemini-3-flash-preview"
+            --set-env-vars "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }},GOOGLE_CLOUD_PROJECT=${{ secrets.GCP_PROJECT_ID }},GOOGLE_CLOUD_REGION=${{ env.REGION }},GEMINI_LIVE_MODEL=gemini-2.5-flash-native-audio-preview-12-2025,GEMINI_MODEL=gemini-3-flash-preview,ALLOWED_ORIGINS=https://tilltech.github.io"
 
       - name: Capture service URL
         id: service_url
