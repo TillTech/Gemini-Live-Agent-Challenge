@@ -570,7 +570,7 @@ const server = http.createServer((request, response) => {
         }
 
         const audioBase64 = body.audioBase64.replace(/\s+/g, '');
-        if (audioBase64.length > MAX_AUDIO_BASE64_CHARS || !isLikelyBase64(audioBase64)) {
+        if (!isLikelyBase64(audioBase64)) {
             sendJson(request, response, { error: 'audioBase64 payload is invalid or too large.' }, 400);
             return;
         }
