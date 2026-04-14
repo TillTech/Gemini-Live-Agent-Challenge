@@ -99,6 +99,7 @@ All variables are documented in [`.env.example`](.env.example):
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GOOGLE_API_KEY` | Yes | — | Gemini API key |
+| `ALLOWED_ORIGINS` | No | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated browser origins allowed to call the API |
 | `GEMINI_LIVE_MODEL` | No | `gemini-2.5-flash-native-audio-preview-12-2025` | Native audio model for real-time voice |
 | `GEMINI_MODEL` | No | `gemini-3.1-flash-image-preview` | Text model for planning fallback |
 | `GEMINI_IMAGE_MODEL` | No | `gemini-3.1-flash-image-preview` | Image generation model |

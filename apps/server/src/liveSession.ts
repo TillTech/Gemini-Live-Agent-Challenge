@@ -289,6 +289,7 @@ function normaliseWidgetTools(tools: string[]) {
         tools
             .filter((tool): tool is string => typeof tool === 'string')
             .map((tool) => tool.trim())
+            .filter((tool) => Object.prototype.hasOwnProperty.call(TOOL_LABELS, tool))
             .filter((tool) => tool.length > 0)
     ));
 }
@@ -302,7 +303,7 @@ function normaliseWidgetPayloads(payloads: LiveWidgetPayload[] | undefined, tool
     for (const payload of payloads) {
         if (!payload || typeof payload.tool !== 'string') continue;
         const tool = payload.tool.trim();
-        if (!tool) continue;
+        if (!tool || !Object.prototype.hasOwnProperty.call(TOOL_LABELS, tool)) continue;
         map.set(tool, {
             tool,
             title: typeof payload.title === 'string' ? payload.title : undefined,
