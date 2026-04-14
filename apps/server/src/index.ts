@@ -559,16 +559,21 @@ const server = http.createServer((request, response) => {
         if (request.method === 'POST' && request.url === '/api/live/audio') {
             const body = await readJsonBody<{ audioBase64?: string; mimeType?: string }>(request);
 
-            if (!body.audioBase64 || !body.mimeType) {
-                sendJson(request, response, { error: 'audioBase64 and mimeType are required.' }, 400);
-                return;
-            }
+        if (!body.audioBase64 || !body.mimeType) {
+            sendJson(request, response, { error: 'audioBase64 and mimeType are required.' }, 400);
+            return;
+        }
 
-            const audioBase64 = body.audioBase64.replace(/\s+/g, '');
-            if (audioBase64.length > MAX_AUDIO_BASE64_CHARS || !isLikelyBase64(audioBase64)) {
-                sendJson(request, response, { error: 'audioBase64 payload is invalid or too large.' }, 400);
-                return;
-            }
+        if (body.audioBase64.length > MAX_AUDIO_BASE64_CHARS) {
+            sendJson(request, response, { error: 'audioBase64 payload is invalid or too large.' }, 400);
+            return;
+        }
+
+        const audioBase64 = body.audioBase64.replace(/\s+/g, '');
+        if (audioBase64.length > MAX_AUDIO_BASE64_CHARS || !isLikelyBase64(audioBase64)) {
+            sendJson(request, response, { error: 'audioBase64 payload is invalid or too large.' }, 400);
+            return;
+        }
 
             const mimeType = body.mimeType.trim();
             if (!isAllowedAudioMimeType(mimeType)) {
